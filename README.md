@@ -8,7 +8,7 @@ A galaxy simulation designed for visual beauty rather than scientific realism
 
 Watch YouTube video:
 
-[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/ROMLBio1iCI/0.jpg)](https://www.youtube.com/watch?v=ROMLBio1iCI)
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/P6jMlMi1iTk/0.jpg)](https://www.youtube.com/watch?v=P6jMlMi1iTk)
 
 ## Requirements
 
