@@ -42,16 +42,16 @@ void setupCamera(const Camera& camera, int width, int height, const SolarSystem&
 void processInput(GLFWwindow* window, Camera& camera, const UIState* uiState) {
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
-	
+
 	if (uiState && uiState->isVisible) return;
 
 	double speedMultiplier = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) ? 2.0 : 1.0;
 	double currentSpeed = camera.moveSpeed * speedMultiplier;
 
 	double forward[3] = {
-		-sin(camera.yaw),
-		0,
-		-cos(camera.yaw)
+		-sin(camera.yaw) * cos(camera.pitch),
+		sin(camera.pitch),
+		-cos(camera.yaw) * cos(camera.pitch)
 	};
 
 	double right[3] = {
@@ -62,10 +62,12 @@ void processInput(GLFWwindow* window, Camera& camera, const UIState* uiState) {
 
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 		camera.posX += forward[0] * currentSpeed;
+		camera.posY += forward[1] * currentSpeed;
 		camera.posZ += forward[2] * currentSpeed;
 	}
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
 		camera.posX -= forward[0] * currentSpeed;
+		camera.posY -= forward[1] * currentSpeed;
 		camera.posZ -= forward[2] * currentSpeed;
 	}
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
@@ -79,10 +81,7 @@ void processInput(GLFWwindow* window, Camera& camera, const UIState* uiState) {
 	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
 		camera.posY += currentSpeed;
 	}
-	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
-		camera.posY += currentSpeed;
-	}
-	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
 		camera.posY -= currentSpeed;
 	}
 }

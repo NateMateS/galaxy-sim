@@ -1,29 +1,110 @@
 ﻿#include "Stars.h"
 #include "SolarSystem.h"
+#include "Shader.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <cmath>
 #include <random>
+#include <memory>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 // Star type colors (based on stellar classification: O, B, A, F, G, K, M)
-struct StarType {
-	float r, g, b;
-	float probability;
-};
+namespace {
+    struct StarType {
+        float r, g, b;
+        float probability;
+    };
 
-const StarType starTypes[] = {
-	{0.6f, 0.7f, 1.0f, 0.05f},   // O - Blue (very hot, rare)
-	{0.7f, 0.8f, 1.0f, 0.10f},   // B - Blue-white (hot)
-	{0.9f, 0.9f, 1.0f, 0.15f},   // A - White (hot)
-	{1.0f, 1.0f, 0.9f, 0.20f},   // F - Yellow-white
-	{1.0f, 1.0f, 0.7f, 0.25f},   // G - Yellow (like our Sun)
-	{1.0f, 0.8f, 0.6f, 0.15f},   // K - Orange
-	{1.0f, 0.6f, 0.5f, 0.10f}    // M - Red (cool, common)
-};
+    const StarType starTypes[] = {
+        {0.6f, 0.7f, 1.0f, 0.05f},   // O - Blue (very hot, rare)
+        {0.7f, 0.8f, 1.0f, 0.10f},   // B - Blue-white (hot)
+        {0.9f, 0.9f, 1.0f, 0.15f},   // A - White (hot)
+        {1.0f, 1.0f, 0.9f, 0.20f},   // F - Yellow-white
+        {1.0f, 1.0f, 0.7f, 0.25f},   // G - Yellow (like our Sun)
+        {1.0f, 0.8f, 0.6f, 0.15f},   // K - Orange
+        {1.0f, 0.6f, 0.5f, 0.10f}    // M - Red (cool, common)
+    };
+}
+
+// Modern GL State
+static std::unique_ptr<Shader> starShader;
+static unsigned int starVAO = 0;
+static unsigned int starVBO = 0;
+
+void initStars() {
+    if (starVAO != 0) {
+        cleanupStars();
+    }
+
+    // Exception will propagate to main for proper handling
+    starShader = std::make_unique<Shader>("assets/shaders/star.vert", "assets/shaders/star.frag");
+
+    glEnable(GL_PROGRAM_POINT_SIZE);
+
+    glGenVertexArrays(1, &starVAO);
+    glGenBuffers(1, &starVBO);
+
+    glBindVertexArray(starVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, starVBO);
+
+    // Layout: x, y, z, r, g, b, brightness, radius, angle, angularVelocity
+    // Size: 10 floats = 40 bytes
+    GLsizei stride = sizeof(Star);
+
+    // 0: aPos (x,y,z)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // 1: aColor (r,g,b)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    // 2: aBrightness
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    // 3: aRadius
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void*)(7 * sizeof(float)));
+    glEnableVertexAttribArray(3);
+
+    // 4: aAngle
+    glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+    glEnableVertexAttribArray(4);
+
+    // 5: aVelocity
+    glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, stride, (void*)(9 * sizeof(float)));
+    glEnableVertexAttribArray(5);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+void cleanupStars() {
+    if (starVAO) {
+        glDeleteVertexArrays(1, &starVAO);
+        starVAO = 0;
+    }
+    if (starVBO) {
+        glDeleteBuffers(1, &starVBO);
+        starVBO = 0;
+    }
+    starShader.reset();
+}
+
+void uploadStarData(const std::vector<Star>& stars) {
+    if (starVAO == 0) return;
+
+    glBindVertexArray(starVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, starVBO);
+
+    // Dynamic Draw since we might regenerate the galaxy
+    glBufferData(GL_ARRAY_BUFFER, stars.size() * sizeof(Star), stars.data(), GL_DYNAMIC_DRAW);
+
+    glBindVertexArray(0);
+}
 
 void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 	std::mt19937 rng(config.seed);
@@ -134,15 +215,15 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 				// split into multiple zones for smoother transition
 				float excessRadius = radius - config.diskRadius;
 				float fadeScale = config.diskRadius * 0.15f;
-				
+
 				float outlierFactor = exp(-excessRadius / fadeScale);
-				
+
 				// quadratic suppression for extreme outliers
 				if (radiusNorm > 1.3f) {
 					float extremeFactor = 1.3f / radiusNorm;
 					outlierFactor *= extremeFactor * extremeFactor;
 				}
-				
+
 				// 8% of normal density
 				acceptProbability = outlierFactor * 0.08f;
 			}
@@ -150,7 +231,7 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 				// Transition zone (85% - 100% of diskRadius) with gradual fadeout
 				float transitionFactor = (config.diskRadius - radius) / (config.diskRadius * 0.15f);
 				transitionFactor = 0.5f + 0.5f * transitionFactor;
-				
+
 				float densityWeight = armProximity * config.armDensityBoost;
 				acceptProbability = (1.0f + densityWeight) / (1.0f + config.armDensityBoost);
 
@@ -158,7 +239,7 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 				if (armProximity < 0.3f) {
 					acceptProbability *= 0.2f;
 				}
-				
+
 				acceptProbability *= transitionFactor;
 			}
 			else {
@@ -182,16 +263,18 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 
 			// radial scatter at edges
 			float radialScatter = normalDist(rng) * 20.0f * radiusNorm * radiusNorm;
-			
-			star.x = (radius + noise * 0.3f + radialScatter) * cos(theta);
-			star.z = (radius + noise * 0.3f + radialScatter) * sin(theta);
+
+			float effectiveRadius = radius + noise * 0.3f + radialScatter;
+
+			star.x = effectiveRadius * cos(theta);
+			star.z = effectiveRadius * sin(theta);
 
 			// Y position (disk height with Gaussian distribution)
 			float heightScale = config.diskHeight * (1.0f - edgeFactor * 0.5f);
 			star.y = normalDist(rng) * heightScale;
 
 			// rotation for disk stars
-			star.radius = radius;
+			star.radius = effectiveRadius;
 			star.angle = theta;
 			// outer stars rotate slower
 			star.angularVelocity = config.rotationSpeed * 1.0f / (sqrt(radius / config.bulgeRadius) * (radius + 1.0f));
@@ -247,32 +330,27 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 	}
 }
 
-void updateStarPositions(std::vector<Star>& stars, double deltaTime) {
-	for (auto& star : stars) {
-		star.angle += star.angularVelocity * deltaTime;
-
-		// normalize angle to [0, 2*PI]
-		while (star.angle > 2.0f * M_PI) star.angle -= 2.0f * M_PI;
-		while (star.angle < 0.0f) star.angle += 2.0f * M_PI;
-
-		// recalc X and Z based on new angle
-		float oldY = star.y;
-		star.x = star.radius * cos(star.angle);
-		star.z = star.radius * sin(star.angle);
-		star.y = oldY;
-	}
-}
 
 void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
-	glPointSize(2.0f);
-	glBegin(GL_POINTS);
+    if (!starShader) return;
 
-	for (const auto& star : stars) {
-		glColor3f(star.r * star.brightness,
-		          star.g * star.brightness,
-		          star.b * star.brightness);
-		glVertex3f(star.x, star.y, star.z);
-	}
+    starShader->use();
 
-	glEnd();
+    // Grab current legacy matrices
+    float modelview[16];
+    float projection[16];
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+    glGetFloatv(GL_PROJECTION_MATRIX, projection);
+
+    starShader->setMat4("view", modelview);
+    starShader->setMat4("projection", projection);
+    starShader->setFloat("time", (float)glfwGetTime());
+
+    glBindVertexArray(starVAO);
+    // Note: Data is now static and uploaded via uploadStarData()
+
+    glDrawArrays(GL_POINTS, 0, (GLsizei)stars.size());
+
+    glBindVertexArray(0);
+    glUseProgram(0);
 }

@@ -4,12 +4,16 @@
 #include "BlackHole.h"
 #include <string>
 
+struct MouseState;
+
 struct UIState {
     bool isVisible;
 
     int hoveredButton;
     int activeInput;
- 
+
+    float fps;
+
     int tempStarCount;
     int tempMolecularClouds;
     int tempColdNeutralClouds;
@@ -23,10 +27,10 @@ struct UIState {
     float tempBlackHoleMass;
     float tempSolarSystemScale;
     float tempTimeSpeed;
-    
+
     unsigned int currentSeed;
     bool needsRegeneration;
-    
+
     int defaultStarCount;
     int defaultMolecularClouds;
     int defaultColdNeutralClouds;
@@ -47,13 +51,13 @@ void initUI();
 void toggleUI(UIState& uiState);
 void renderUI(UIState& uiState, int screenWidth, int screenHeight);
 
-void updateUIStateFromConfigs(UIState& uiState, const GalaxyConfig& galaxyConfig, 
+void updateUIStateFromConfigs(UIState& uiState, const GalaxyConfig& galaxyConfig,
     const GasConfig& gasConfig, const BlackHoleConfig& blackHoleConfig);
 
-void applyUIChangesToConfigs(const UIState& uiState, GalaxyConfig& galaxyConfig, 
+void applyUIChangesToConfigs(const UIState& uiState, GalaxyConfig& galaxyConfig,
          GasConfig& gasConfig, BlackHoleConfig& blackHoleConfig);
 
-void handleUIInput(struct GLFWwindow* window, UIState& uiState);
+void handleUIInput(struct GLFWwindow* window, UIState& uiState, MouseState& mouseState);
 
 extern float g_currentBlackHoleMass;
 extern float g_currentSolarSystemScale;

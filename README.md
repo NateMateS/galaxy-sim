@@ -1,6 +1,6 @@
 # untitled galaxy simulator
 
-A galaxy simulation designed for visual beauty rather than scientific realism
+A galaxy simulation designed for visual beauty rather than scientific realism.
 
 ![alt text](ghassets/image.png)
 ![alt text](ghassets/image2.png)
@@ -13,40 +13,44 @@ Watch YouTube video:
 ## Requirements
 
 ### Software
-- **Visual Studio 2022** (v143 platform toolset)
+- **Visual Studio 2022** (v143 platform toolset) OR **VSCode** with C++ tools
+- **CMake** (optional, for VSCode/CLI build)
 - **Windows SDK 10.0** or later
 - **C++17** compiler support
 
 ### Dependencies
-You'll need to download and set up the following libraries:
+Dependencies (GLFW 3.4, GLAD) are managed locally in the `libs/` folder.
 
-1. **GLFW 3.4** (Windows 64-bit binaries)
-   - Download from [glfw.org](https://www.glfw.org/download.html)
-   - Use the pre-compiled binaries for VC2022
-
-2. **GLAD** (OpenGL loader)
-   - Generate from [glad.dav1d.de](https://glad.dav1d.de/)
-   - Core profile, OpenGL 3.3+
-
-3. **OpenGL 3.3+**
-   - Included with Windows (opengl32.lib)
+**First Step:** Run the setup script to download all dependencies automatically.
+```powershell
+.\setup_libs.ps1
+```
 
 ## Build
 
-1. Open `Space C++.sln` in Visual Studio 2022
-2. Configure library paths:
-   - Right-click the project → Properties
-   - **C/C++** → **Additional Include Directories**: Add paths to:
-     - `glfw-3.4.bin.WIN64\include`
-     - `glad\include`
-   - **Linker** → **Additional Library Directories**: Add path to:
-     - `glfw-3.4.bin.WIN64\lib-vc2022`
-   - **Linker** → **Input** → **Additional Dependencies**: Ensure these are listed:
-     - `glfw3.lib`
-     - `opengl32.lib`
-3. Select **x64** platform (Win32 is also supported)
-4. Choose **Debug** or **Release** configuration
-5. Build and run (F5)
+### Option 1: Visual Studio 2022
+1.  Ensure you have run `.\setup_libs.ps1`.
+2.  Open `Space C++.sln` in Visual Studio 2022.
+3.  Select **x64** platform.
+4.  Choose **Release** configuration.
+5.  Build and run (F5).
+
+### Option 2: CMake (VSCode / CLI)
+1.  Ensure you have run `.\setup_libs.ps1`.
+2.  Create a build directory:
+    ```powershell
+    mkdir build
+    cd build
+    ```
+3.  Configure and Build:
+    ```powershell
+    cmake ..
+    cmake --build . --config Release
+    ```
+4.  Run:
+    ```powershell
+    .\Release\galaxy-sim.exe
+    ```
 
 ## Configuration
 
@@ -62,11 +66,14 @@ config.rotationSpeed = 1.0;
 
 ## Controls
 
-- **WASD** - Move camera
+- **WASD** - Move camera (Noclip style - fly in direction of view)
+- **Space** - Move Up (World vertical)
+- **CTRL** - Move Down (World vertical)
+- **Shift** - Speed up
 - **Mouse** - Look around
 - **Scroll** - Zoom in/out
 - **Ctrl** (hold) - Move zoom anchor to solar system instead of (0,0,0)
-- **Tab** - simulation config
+- **Tab** - Toggle simulation config UI
 
 ## Platform Support
 - **Windows** ✅

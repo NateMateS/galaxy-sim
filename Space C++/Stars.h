@@ -14,6 +14,9 @@ struct Star {
 	float angularVelocity;  // Rotation speed (radians per second)
 };
 
+// Size of Star struct: 10 floats = 40 bytes
+// Layout: x, y, z, r, g, b, brightness, radius, angle, angularVelocity
+
 struct GalaxyConfig {
 	int numStars;
 	int numSpiralArms;
@@ -29,6 +32,8 @@ struct GalaxyConfig {
 	double rotationSpeed;	// Base rotation multiplier
 };
 
+void initStars();
+void cleanupStars();
 void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config);
-void updateStarPositions(std::vector<Star>& stars, double deltaTime);
+void uploadStarData(const std::vector<Star>& stars);
 void renderStars(const std::vector<Star>& stars, const RenderZone& zone);

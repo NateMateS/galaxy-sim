@@ -73,21 +73,18 @@ int main() {
 	}
 
 	setupOpenGL();
-
-	Camera camera;
-	camera.posY = 200.0;
-	camera.pitch = -0.2;
-	camera.zoomLevel = 0.001;
-	camera.zoom = camera.zoomLevel;
-
-	MouseState mouseState = { WIDTH / 2.0, HEIGHT / 2.0, true };
-
-	initInput(window, camera, mouseState);
+	try {
+		initStars();
+	} catch (const std::exception& e) {
+		std::cerr << "Initialization failed: " << e.what() << std::endl;
+		return -1;
+	}
 
 	// Generate galaxy
 	GalaxyConfig galaxyConfig = createDefaultGalaxyConfig();
 	std::vector<Star> stars;
 	generateStarField(stars, galaxyConfig);
+	uploadStarData(stars);
 
 	BlackHoleConfig blackHoleConfig = createDefaultBlackHoleConfig();
 	std::vector<BlackHole> blackHoles;
@@ -100,6 +97,22 @@ int main() {
 		galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 	generateSolarSystem();
+
+	Camera camera;
+	camera.zoomLevel = 0.1;
+	camera.zoom = camera.zoomLevel;
+
+	// Position camera to look at the center of the galaxy (0,0,0)
+	// Note: Camera position is in scaled view space
+	camera.posX = 0.0;
+	camera.posY = 1000.0 * camera.zoom;
+	camera.posZ = 1500.0 * camera.zoom;
+	camera.pitch = -0.58; // ~33 degrees down
+	camera.yaw = 0.0;
+
+	MouseState mouseState = { WIDTH / 2.0, HEIGHT / 2.0, true };
+
+	initInput(window, camera, mouseState);
 
 	initUI();
 	UIState uiState = {};
@@ -115,6 +128,8 @@ int main() {
 	setGlobalUIState(&uiState);
 
 	double lastTime = glfwGetTime();
+	double fpsTimer = 0.0;
+	int frameCount = 0;
 
 	// Main loop
 	while (!glfwWindowShouldClose(window)) {
@@ -122,20 +137,30 @@ int main() {
 		double deltaTime = currentTime - lastTime;
 		lastTime = currentTime;
 
+		// FPS Calculation
+		frameCount++;
+		fpsTimer += deltaTime;
+		if (fpsTimer >= 1.0) {
+			uiState.fps = static_cast<float>(frameCount) / static_cast<float>(fpsTimer);
+			frameCount = 0;
+			fpsTimer = 0.0;
+		}
+
 		double adjustedDeltaTime = deltaTime * g_currentTimeSpeed;
 
-		updateStarPositions(stars, adjustedDeltaTime);
+		// Star positions are now updated in the vertex shader
 		updateBlackHoles(blackHoles, adjustedDeltaTime);
 		updateGalacticGas(gasClouds, adjustedDeltaTime);
 		updatePlanets(adjustedDeltaTime);
 
-		handleUIInput(window, uiState);
+		handleUIInput(window, uiState, mouseState);
 
 		if (uiState.needsRegeneration) {
 			applyUIChangesToConfigs(uiState, galaxyConfig, gasConfig, blackHoleConfig);
 
 			stars.clear();
 			generateStarField(stars, galaxyConfig);
+			uploadStarData(stars);
 
 			blackHoles.clear();
 			generateBlackHoles(blackHoles, blackHoleConfig, galaxyConfig.seed,
@@ -156,6 +181,7 @@ int main() {
 		glfwPollEvents();
 	}
 
+	cleanupStars();
 	cleanup(window);
 	return 0;
 }

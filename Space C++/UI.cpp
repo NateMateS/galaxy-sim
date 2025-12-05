@@ -1,4 +1,5 @@
 #include "UI.h"
+#include "Input.h"
 #include "FontRenderer.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -379,6 +380,13 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 
 	FontRenderer::renderText("Press TAB to close | ESC to exit", itemX, currentY, 0.95f, 0.6f, 0.6f, 0.7f);
 
+	// FPS Counter (Top Right)
+	std::stringstream fpsStream;
+	fpsStream << "FPS: " << static_cast<int>(uiState.fps);
+	std::string fpsStr = fpsStream.str();
+	float fpsWidth = FontRenderer::getTextWidth(fpsStr, 1.2f);
+	FontRenderer::renderText(fpsStr, screenWidth - fpsWidth - 20.0f, 20.0f, 1.2f, 0.0f, 1.0f, 0.0f);
+
 	glEnable(GL_DEPTH_TEST);
 
 	glMatrixMode(GL_PROJECTION);
@@ -387,7 +395,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	glPopMatrix();
 }
 
-void handleUIInput(GLFWwindow* window, UIState& uiState) {
+void handleUIInput(GLFWwindow* window, UIState& uiState, MouseState& mouseState) {
 	glfwGetCursorPos(window, &mouseX, &mouseY);
 
 	static bool tabWasPressed = false;
@@ -401,6 +409,7 @@ void handleUIInput(GLFWwindow* window, UIState& uiState) {
 		}
 		else {
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			mouseState.firstMouse = true;
 		}
 	}
 	tabWasPressed = tabPressed;
