@@ -1,6 +1,7 @@
 ﻿#include "Stars.h"
 #include "SolarSystem.h"
 #include "Shader.h"
+#include "Window.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <cmath>
@@ -334,6 +335,18 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
     if (!starShader) return;
 
+    // Enable point sprites for gl_PointCoord to work in Compatibility Profile
+    glEnable(GL_POINT_SPRITE);
+    // Ensure program point size is enabled (usually is, but good for safety)
+    glEnable(GL_PROGRAM_POINT_SIZE);
+
+    // Enable additive blending for glowing effect
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+    // Disable depth writing so stars blend instead of occluding each other
+    glDepthMask(GL_FALSE);
+
     starShader->use();
 
     // Grab current legacy matrices
@@ -345,6 +358,7 @@ void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
     starShader->setMat4("view", modelview);
     starShader->setMat4("projection", projection);
     starShader->setFloat("time", (float)glfwGetTime());
+    starShader->setFloat("screenHeight", (float)HEIGHT);
 
     glBindVertexArray(starVAO);
     // Note: Data is now static and uploaded via uploadStarData()
@@ -353,4 +367,9 @@ void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
 
     glBindVertexArray(0);
     glUseProgram(0);
+
+    // Cleanup state
+    glDepthMask(GL_TRUE); // Re-enable depth writing
+    glDisable(GL_POINT_SPRITE);
+    glDisable(GL_BLEND);
 }
