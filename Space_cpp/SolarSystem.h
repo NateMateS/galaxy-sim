@@ -59,6 +59,5 @@ RenderZone calculateRenderZone(const Camera& camera);
 void generateSolarSystem();
 void updatePlanets(double deltaTime);
 void renderSolarSystem(const RenderZone& zone, const Camera& camera,
-    const glm::mat4& view, const glm::mat4& projection,
     unsigned int sunTexture, unsigned int planetTexture,
     class Shader* sunShader, class Shader* planetShader, class Shader* orbitShader);

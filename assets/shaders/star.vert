@@ -8,10 +8,14 @@ layout (location = 5) in float aVelocity;
 
 out vec3 Color;
 
-uniform mat4 view;
-uniform mat4 projection;
-uniform float time;
 uniform float screenHeight;
+
+layout (std140) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPos;
+    float time;
+};
 
 void main() {
     // 1. ORBITAL MECHANICS

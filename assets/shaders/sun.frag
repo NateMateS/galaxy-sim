@@ -6,8 +6,13 @@ in vec3 Normal;
 in vec3 FragPos;
 
 uniform sampler2D sunTexture;
-uniform float time;
-uniform vec3 viewPos;
+
+layout (std140) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPos;
+    float time;
+};
 
 void main()
 {
@@ -27,7 +32,7 @@ void main()
     surfaceColor *= 2.5;
 
     // 2. Fresnel Glow (Corona)
-    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 viewDir = normalize(viewPos.xyz - FragPos);
     vec3 norm = normalize(Normal);
     float fresnel = 1.0 - max(dot(viewDir, norm), 0.0);
     fresnel = pow(fresnel, 2.0);

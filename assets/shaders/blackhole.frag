@@ -5,11 +5,16 @@ in vec2 TexCoords;
 in vec3 FragPos;
 
 uniform sampler2D noiseTexture;
-uniform float time;
 uniform vec3 centerPos;
 uniform float innerRadius;
 uniform float outerRadius;
-uniform vec3 viewPos;
+
+layout (std140) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPos;
+    float time;
+};
 
 void main()
 {

@@ -43,6 +43,7 @@ void initStars() {
 
     // Exception will propagate to main for proper handling
     starShader = std::make_unique<Shader>("assets/shaders/star.vert", "assets/shaders/star.frag");
+    starShader->setUniformBlock("GlobalUniforms", 0);
 
     glEnable(GL_PROGRAM_POINT_SIZE);
 
@@ -333,7 +334,7 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 }
 
 
-void renderStars(const std::vector<Star>& stars, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection) {
+void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
     if (!starShader) return;
 
     // Note: GL_POINT_SPRITE is deprecated in Core Profile (3.2+) and always enabled.
@@ -349,10 +350,6 @@ void renderStars(const std::vector<Star>& stars, const RenderZone& zone, const g
     glDepthMask(GL_FALSE);
 
     starShader->use();
-
-    starShader->setMat4("view", glm::value_ptr(view));
-    starShader->setMat4("projection", glm::value_ptr(projection));
-    starShader->setFloat("time", (float)glfwGetTime());
     starShader->setFloat("screenHeight", (float)HEIGHT);
 
     glBindVertexArray(starVAO);

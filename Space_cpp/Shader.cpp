@@ -74,23 +74,42 @@ void Shader::use() {
     glUseProgram(ID);
 }
 
+int Shader::getUniformLocation(const std::string& name) const {
+    if (uniformLocationCache.find(name) != uniformLocationCache.end())
+        return uniformLocationCache[name];
+
+    int location = glGetUniformLocation(ID, name.c_str());
+    uniformLocationCache[name] = location;
+    return location;
+}
+
 void Shader::setBool(const std::string& name, bool value) const {
-    glUniform1i(glGetUniformLocation(ID, name.c_str()), (int)value);
+    glUniform1i(getUniformLocation(name), (int)value);
 }
 void Shader::setInt(const std::string& name, int value) const {
-    glUniform1i(glGetUniformLocation(ID, name.c_str()), value);
+    glUniform1i(getUniformLocation(name), value);
 }
 void Shader::setFloat(const std::string& name, float value) const {
-    glUniform1f(glGetUniformLocation(ID, name.c_str()), value);
+    glUniform1f(getUniformLocation(name), value);
+}
+void Shader::setVec2(const std::string& name, float x, float y) const {
+    glUniform2f(getUniformLocation(name), x, y);
 }
 void Shader::setVec3(const std::string& name, float x, float y, float z) const {
-    glUniform3f(glGetUniformLocation(ID, name.c_str()), x, y, z);
+    glUniform3f(getUniformLocation(name), x, y, z);
 }
 void Shader::setVec4(const std::string& name, float x, float y, float z, float w) const {
-    glUniform4f(glGetUniformLocation(ID, name.c_str()), x, y, z, w);
+    glUniform4f(getUniformLocation(name), x, y, z, w);
 }
 void Shader::setMat4(const std::string& name, const float* value) const {
-    glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, value);
+    glUniformMatrix4fv(getUniformLocation(name), 1, GL_FALSE, value);
+}
+
+void Shader::setUniformBlock(const std::string& name, unsigned int bindingPoint) const {
+    unsigned int index = glGetUniformBlockIndex(ID, name.c_str());
+    if (index != GL_INVALID_INDEX) {
+        glUniformBlockBinding(ID, index, bindingPoint);
+    }
 }
 
 void Shader::checkCompileErrors(unsigned int shader, std::string type) {

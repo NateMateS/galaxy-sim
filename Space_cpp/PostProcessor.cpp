@@ -8,18 +8,18 @@ PostProcessor::PostProcessor(unsigned int width, unsigned int height)
     // Load shaders
     std::cout << "PostProcessor: Loading Shaders..." << std::endl;
     postShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/post.frag");
-    blurShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/blur.frag");
-    extractShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/extract.frag");
+    downsampleShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/downsample.frag");
+    upsampleShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/upsample.frag");
 
     postShader->use();
     postShader->setInt("scene", 0);
     postShader->setInt("bloomBlur", 1);
 
-    blurShader->use();
-    blurShader->setInt("image", 0);
+    downsampleShader->use();
+    downsampleShader->setInt("srcTexture", 0);
 
-    extractShader->use();
-    extractShader->setInt("scene", 0);
+    upsampleShader->use();
+    upsampleShader->setInt("srcTexture", 0);
 
     std::cout << "PostProcessor: InitFramebuffers..." << std::endl;
     InitFramebuffers();
@@ -41,8 +41,11 @@ PostProcessor::~PostProcessor() {
     glDeleteTextures(1, &ScreenTexture);
     glDeleteTextures(1, &DepthTexture);
 
-    glDeleteFramebuffers(2, PingPongFBO);
-    glDeleteTextures(2, PingPongColorbuffers);
+    glDeleteFramebuffers(1, &MipChainFBO);
+    for (auto& mip : mipChain) {
+        glDeleteTextures(1, &mip.texture);
+    }
+    mipChain.clear();
 
     glDeleteVertexArrays(1, &QuadVAO);
     glDeleteBuffers(1, &QuadVBO);
@@ -116,27 +119,40 @@ void PostProcessor::InitFramebuffers() {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cout << "ERROR::POSTPROCESSOR: Intermediate Framebuffer not complete!" << std::endl;
 
-    // 3. Ping-Pong Framebuffers for Blur (Downsampled to Half Resolution)
-    unsigned int bloomWidth = Width / 2;
-    unsigned int bloomHeight = Height / 2;
+    InitBloomMips();
+}
 
-    glGenFramebuffers(2, PingPongFBO);
-    glGenTextures(2, PingPongColorbuffers);
-    for (unsigned int i = 0; i < 2; i++)
-    {
-        glBindFramebuffer(GL_FRAMEBUFFER, PingPongFBO[i]);
-        glBindTexture(GL_TEXTURE_2D, PingPongColorbuffers[i]);
-        // Note: Using bloomWidth/bloomHeight here
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, bloomWidth, bloomHeight, 0, GL_RGBA, GL_FLOAT, NULL);
+void PostProcessor::InitBloomMips() {
+    glGenFramebuffers(1, &MipChainFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, MipChainFBO);
+
+    glm::vec2 mipSize((float)Width, (float)Height); // Start from Full Res
+    glm::ivec2 mipIntSize = (glm::ivec2)mipSize;
+
+    // Generate 6 mips (1/2, 1/4, 1/8, 1/16, 1/32, 1/64)
+    for (int i = 0; i < 6; i++) {
+        BloomMip mip;
+        mipSize *= 0.5f;
+        mipIntSize /= 2;
+
+        if (mipIntSize.x < 2 || mipIntSize.y < 2) break;
+
+        mip.size = mipIntSize;
+
+        glGenTextures(1, &mip.texture);
+        glBindTexture(GL_TEXTURE_2D, mip.texture);
+
+        // Use R11G11B10F for better performance (half memory bandwidth of RGBA16F)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R11F_G11F_B10F, mipIntSize.x, mipIntSize.y, 0, GL_RGB, GL_FLOAT, NULL);
+
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, PingPongColorbuffers[i], 0);
 
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            std::cout << "ERROR::POSTPROCESSOR: PingPong Framebuffer not complete!" << std::endl;
+        mipChain.push_back(mip);
     }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void PostProcessor::InitRenderData() {
@@ -180,41 +196,63 @@ void PostProcessor::EndRender() {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, IntermediateFBO);
     glBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-    // 2. Extraction & Downsampling (Full Res -> Half Res)
-    unsigned int bloomWidth = Width / 2;
-    unsigned int bloomHeight = Height / 2;
+    // 2. Dual-Filter Bloom Pass
+    glBindFramebuffer(GL_FRAMEBUFFER, MipChainFBO);
 
-    // Bind the first ping-pong buffer (which is half-res)
-    glBindFramebuffer(GL_FRAMEBUFFER, PingPongFBO[0]);
-    glViewport(0, 0, bloomWidth, bloomHeight); // IMPORTANT: Set viewport for downsampling
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    extractShader->use();
+    // DOWNSAMPLE PHASE
+    downsampleShader->use();
+    downsampleShader->setInt("srcTexture", 0);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ScreenTexture); // Read from Full Res Resolved Scene
-    glBindVertexArray(QuadVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindTexture(GL_TEXTURE_2D, ScreenTexture); // Source for Mip 0
 
-    // 3. Gaussian Blur (Half Res)
-    bool horizontal = true;
-    unsigned int amount = 10; // More iterations for smoother glow
+    for (size_t i = 0; i < mipChain.size(); i++) {
+        const BloomMip& mip = mipChain[i];
 
-    blurShader->use();
-    for (unsigned int i = 0; i < amount; i++)
-    {
-        glBindFramebuffer(GL_FRAMEBUFFER, PingPongFBO[horizontal]);
+        // Set viewport to target mip size
+        glViewport(0, 0, mip.size.x, mip.size.y);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mip.texture, 0);
 
-        blurShader->setInt("horizontal", horizontal);
-        glActiveTexture(GL_TEXTURE0);
+        // Resolution of source texture
+        if (i == 0) {
+            downsampleShader->setVec2("srcResolution", (float)Width, (float)Height);
+        } else {
+            downsampleShader->setVec2("srcResolution", (float)mipChain[i-1].size.x, (float)mipChain[i-1].size.y);
+        }
 
-        // Bind texture of other framebuffer (or extracted brightness for first iteration)
-        glBindTexture(GL_TEXTURE_2D, PingPongColorbuffers[!horizontal]);
-
+        glBindVertexArray(QuadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        horizontal = !horizontal;
+
+        // Prepare for next iteration: Current mip becomes source
+        glBindTexture(GL_TEXTURE_2D, mip.texture);
     }
 
-    // 4. Render to Screen (Combine Full Res Scene + Half Res Blur)
+    // UPSAMPLE PHASE
+    upsampleShader->use();
+    upsampleShader->setInt("srcTexture", 0);
+    upsampleShader->setFloat("filterRadius", 0.005f);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE); // Additive Blending to accumulate bloom
+
+    for (int i = (int)mipChain.size() - 1; i > 0; i--) {
+        const BloomMip& mip = mipChain[i];
+        const BloomMip& nextMip = mipChain[i-1];
+
+        // Source: Current small mip
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mip.texture);
+
+        // Target: Next larger mip
+        glViewport(0, 0, nextMip.size.x, nextMip.size.y);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, nextMip.texture, 0);
+
+        glBindVertexArray(QuadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    glDisable(GL_BLEND);
+
+    // 3. Render to Screen (Composite)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, Width, Height); // Restore Full Viewport
 
@@ -223,7 +261,7 @@ void PostProcessor::EndRender() {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, ScreenTexture);
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, PingPongColorbuffers[!horizontal]); // Result of last blur
+    glBindTexture(GL_TEXTURE_2D, mipChain[0].texture); // Result of bloom is in Mip 0
     postShader->setInt("bloom", true);
     postShader->setFloat("exposure", 0.5f); // Exposure level
 
@@ -235,7 +273,7 @@ void PostProcessor::Resize(unsigned int width, unsigned int height) {
     Width = width;
     Height = height;
 
-    // Re-create framebuffers with new size
+    // Re-create framebuffers
     glDeleteFramebuffers(1, &MSAAFBO);
     glDeleteTextures(1, &MSAATexture);
     glDeleteTextures(1, &MSAADepthTexture);
@@ -247,15 +285,18 @@ void PostProcessor::Resize(unsigned int width, unsigned int height) {
     glDeleteFramebuffers(1, &IntermediateFBO);
     glDeleteTextures(1, &ScreenTexture);
     glDeleteTextures(1, &DepthTexture);
-    glDeleteFramebuffers(2, PingPongFBO);
-    glDeleteTextures(2, PingPongColorbuffers);
+
+    glDeleteFramebuffers(1, &MipChainFBO);
+    for (auto& mip : mipChain) {
+        glDeleteTextures(1, &mip.texture);
+    }
+    mipChain.clear();
 
     InitFramebuffers();
 }
 
 void PostProcessor::CopyDepth() {
     // Copy MSAA Depth -> MSAA Depth Copy
-    // This is safe and supported (same format/samples)
     glBindFramebuffer(GL_READ_FRAMEBUFFER, MSAAFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, DepthCopyFBO);
     glBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);

@@ -36,4 +36,4 @@ void initStars();
 void cleanupStars();
 void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config);
 void uploadStarData(const std::vector<Star>& stars);
-void renderStars(const std::vector<Star>& stars, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection);
+void renderStars(const std::vector<Star>& stars, const RenderZone& zone);

@@ -12,10 +12,14 @@ layout (location = 3) in vec3 aParams;
 out vec4 Color;
 out float LinearDepth;
 
-uniform mat4 view;
-uniform mat4 projection;
-uniform float u_Time;
 uniform float pointScale;
+
+layout (std140) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPos;
+    float time;
+};
 
 void main()
 {
@@ -24,7 +28,7 @@ void main()
     float angularVelocity = aOrbital.z;
 
     // 1. Calculate Current Orbital Angle
-    float currentAngle = initialAngle + angularVelocity * u_Time;
+    float currentAngle = initialAngle + angularVelocity * time;
 
     // 2. Calculate Cloud Center Position
     float cosA = cos(currentAngle);
@@ -39,7 +43,7 @@ void main()
     vec3 rotatedOffset = vec3(localX, aOffset.y, localZ);
 
     // 4. Apply Turbulence (Sine wave animation)
-    float turbulence = sin(u_Time * aParams.z + aParams.y);
+    float turbulence = sin(time * aParams.z + aParams.y);
     // Apply turbulence mainly to Y (up/down) and slightly to radius
     vec3 turbOffset = vec3(0.0, turbulence * 2.0, 0.0);
 

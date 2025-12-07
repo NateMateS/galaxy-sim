@@ -231,7 +231,6 @@ void updatePlanets(double deltaTime)
 }
 
 void renderSolarSystem(const RenderZone &zone, const Camera& camera,
-    const glm::mat4& view, const glm::mat4& projection,
     unsigned int sunTexture, unsigned int planetTexture,
     Shader* sunShader, Shader* planetShader, Shader* orbitShader)
 {
@@ -239,9 +238,6 @@ void renderSolarSystem(const RenderZone &zone, const Camera& camera,
 
     // --- Render Sun ---
     sunShader->use();
-    sunShader->setMat4("view", glm::value_ptr(view));
-    sunShader->setMat4("projection", glm::value_ptr(projection));
-    sunShader->setFloat("time", (float)glfwGetTime());
 
     float sunRadius = 0.01f;
     if (zone.zoomLevel > 1000.0) sunRadius = 0.05f;
@@ -256,7 +252,6 @@ void renderSolarSystem(const RenderZone &zone, const Camera& camera,
     sunModel = glm::scale(sunModel, glm::vec3(sunRadius));
 
     sunShader->setMat4("model", glm::value_ptr(sunModel));
-    sunShader->setVec3("viewPos", (float)camera.posX, (float)camera.posY, (float)camera.posZ);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sunTexture);
@@ -267,10 +262,7 @@ void renderSolarSystem(const RenderZone &zone, const Camera& camera,
 
     // --- Render Planets ---
     planetShader->use();
-    planetShader->setMat4("view", glm::value_ptr(view));
-    planetShader->setMat4("projection", glm::value_ptr(projection));
     planetShader->setVec3("lightPos", (float)sun.x, (float)sun.y, (float)sun.z);
-    planetShader->setVec3("viewPos", (float)camera.posX, (float)camera.posY, (float)camera.posZ);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, planetTexture);
@@ -301,8 +293,6 @@ void renderSolarSystem(const RenderZone &zone, const Camera& camera,
     if (zone.renderOrbits && orbitShader)
     {
         orbitShader->use();
-        orbitShader->setMat4("view", glm::value_ptr(view));
-        orbitShader->setMat4("projection", glm::value_ptr(projection));
         orbitShader->setVec3("color", 0.2f, 0.2f, 0.2f); // Dim orbit lines
 
         glBindVertexArray(orbitVAO);

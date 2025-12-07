@@ -16,11 +16,13 @@
 #include "PostProcessor.h"
 #include "TextureGenerator.h"
 #include "Shader.h"
+#include "GlobalUniforms.h"
 
 int WIDTH = 1280;
 int HEIGHT = 720;
 
 // Render Resources
+std::unique_ptr<GlobalUniformBuffer> globalUniforms;
 std::unique_ptr<PostProcessor> postProcessor;
 std::unique_ptr<Shader> planetShader;
 std::unique_ptr<Shader> sunShader;
@@ -77,6 +79,11 @@ void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackH
 
 	RenderZone zone = calculateRenderZone(camera);
 
+    // Update Global Uniforms (UBO)
+    if (globalUniforms) {
+        globalUniforms->update(view, projection, glm::vec3(camera.posX, camera.posY, camera.posZ), (float)glfwGetTime());
+    }
+
     // Render Order: Opaque -> Transparent
 
 	if (solarSystem.isGenerated) {
@@ -84,7 +91,7 @@ void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackH
 		if (!planetShader) fprintf(stderr, "planetShader is NULL\n");
 		if (!orbitShader) fprintf(stderr, "orbitShader is NULL\n");
 
-		renderSolarSystem(zone, camera, view, projection, sunTexture, planetTexture, sunShader.get(), planetShader.get(), orbitShader.get());
+		renderSolarSystem(zone, camera, sunTexture, planetTexture, sunShader.get(), planetShader.get(), orbitShader.get());
 	}
 
     // Copy Depth to break Feedback Loop (Read Copy, Write Original)
@@ -92,7 +99,7 @@ void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackH
 
     // Transparent / Additive
     // Stars (Additive)
-	renderStars(stars, zone, view, projection);
+	renderStars(stars, zone);
 
     // Gas (Blend with Soft Particles)
     // We use the MSAA depth COPY directly via sampler2DMS
@@ -128,6 +135,16 @@ int main() {
         blackHoleShader = std::make_unique<Shader>("assets/shaders/blackhole.vert", "assets/shaders/blackhole.frag");
         gasShader = std::make_unique<Shader>("assets/shaders/gas.vert", "assets/shaders/gas.frag");
         orbitShader = std::make_unique<Shader>("assets/shaders/orbit.vert", "assets/shaders/orbit.frag");
+
+        // Initialize UBO
+        globalUniforms = std::make_unique<GlobalUniformBuffer>();
+
+        // Bind Uniform Blocks
+        planetShader->setUniformBlock("GlobalUniforms", 0);
+        sunShader->setUniformBlock("GlobalUniforms", 0);
+        blackHoleShader->setUniformBlock("GlobalUniforms", 0);
+        gasShader->setUniformBlock("GlobalUniforms", 0);
+        orbitShader->setUniformBlock("GlobalUniforms", 0);
 
         // Uniforms setup
         blackHoleShader->use();

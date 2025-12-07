@@ -1,7 +1,14 @@
 #pragma once
 #include <glad/glad.h>
 #include <memory>
+#include <vector>
+#include <glm/glm.hpp>
 #include "Shader.h"
+
+struct BloomMip {
+    unsigned int texture;
+    glm::ivec2 size;
+};
 
 class PostProcessor {
 public:
@@ -21,12 +28,13 @@ public:
     unsigned int ScreenTexture; // Texture attachment for Intermediate FBO
     unsigned int DepthTexture; // Resolved Depth Texture
 
-    unsigned int PingPongFBO[2]; // For Gaussian Blur
-    unsigned int PingPongColorbuffers[2];
+    // Bloom Mip Chain
+    unsigned int MipChainFBO;
+    std::vector<BloomMip> mipChain;
 
     std::unique_ptr<Shader> postShader;
-    std::unique_ptr<Shader> blurShader;
-    std::unique_ptr<Shader> extractShader;
+    std::unique_ptr<Shader> downsampleShader;
+    std::unique_ptr<Shader> upsampleShader;
 
     unsigned int QuadVAO = 0;
     unsigned int QuadVBO;
@@ -49,4 +57,5 @@ public:
 private:
     void InitRenderData();
     void InitFramebuffers();
+    void InitBloomMips();
 };
