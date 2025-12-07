@@ -55,7 +55,9 @@ void updateUIStateFromConfigs(UIState& uiState, const GalaxyConfig& galaxyConfig
     const GasConfig& gasConfig, const BlackHoleConfig& blackHoleConfig);
 
 void applyUIChangesToConfigs(const UIState& uiState, GalaxyConfig& galaxyConfig,
-         GasConfig& gasConfig, BlackHoleConfig& blackHoleConfig);
+	GasConfig& gasConfig, BlackHoleConfig& blackHoleConfig);
+
+void cleanupUI();
 
 void handleUIInput(struct GLFWwindow* window, UIState& uiState, MouseState& mouseState);
 

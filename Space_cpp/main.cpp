@@ -63,7 +63,7 @@ BlackHoleConfig createDefaultBlackHoleConfig() {
 	return config;
 }
 
-void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackHoles,
+void render(const std::vector<StarInput>& stars, const std::vector<BlackHole>& blackHoles,
 	const std::vector<GasVertex>& darkGas, const std::vector<GasVertex>& luminousGas,
     const Camera& camera, UIState& uiState) {
     if (!postProcessor) {
@@ -99,7 +99,7 @@ void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackH
 
     // Transparent / Additive
     // Stars (Additive)
-	renderStars(stars, zone);
+	renderStars(zone, view, projection, glm::vec3(camera.posX, camera.posY, camera.posZ), (float)glfwGetTime());
 
     // Gas (Blend with Soft Particles)
     // We use the MSAA depth COPY directly via sampler2DMS
@@ -165,7 +165,7 @@ int main() {
 
 	// Generate galaxy
 	GalaxyConfig galaxyConfig = createDefaultGalaxyConfig();
-	std::vector<Star> stars;
+	std::vector<StarInput> stars;
 	generateStarField(stars, galaxyConfig);
 	uploadStarData(stars);
 
@@ -288,6 +288,7 @@ int main() {
 	}
 
 	cleanupStars();
+	cleanupUI();
     setResizeCallback(nullptr);
 	cleanup(window);
 	return 0;

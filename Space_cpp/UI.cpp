@@ -30,10 +30,13 @@ float g_currentSolarSystemScale = 500.0f;
 float g_currentTimeSpeed = 1.0f;
 
 // UI Render State
-static std::unique_ptr<Shader> uiShader;
+static std::unique_ptr<Shader> uiBatchShader;
 static unsigned int uiVAO = 0;
 static unsigned int uiVBO = 0;
 static glm::mat4 uiProjection;
+
+// The Batch Buffer
+static std::vector<UIVertex> uiBatchBuffer;
 
 enum ButtonID {
 	BTN_NONE = -1,
@@ -83,51 +86,92 @@ static std::vector<ButtonRect> buttons;
 static double mouseX = 0, mouseY = 0;
 
 void initUI() {
-	FontRenderer::initFont(1280, 720); // Default size, will be updated in render loop if needed
+	FontRenderer::initFont(1280, 720); // Default size
 
-    uiShader = std::make_unique<Shader>("assets/shaders/ui.vert", "assets/shaders/ui.frag");
+    uiBatchShader = std::make_unique<Shader>("assets/shaders/ui_batch.vert", "assets/shaders/ui_batch.frag");
 
     glGenVertexArrays(1, &uiVAO);
     glGenBuffers(1, &uiVBO);
 
     glBindVertexArray(uiVAO);
     glBindBuffer(GL_ARRAY_BUFFER, uiVBO);
-    // x, y
-    glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
+    // Layout matches UIVertex: x, y, u, v, r, g, b, a, mode
+    // 9 floats total
+    size_t stride = 9 * sizeof(float);
+
+    // 0: Pos (vec2)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (void*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+    // 1: UV (vec2)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    // 2: Color (vec4)
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)(4 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    // 3: Mode (float)
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
+void cleanupUI() {
+    if (uiVAO) glDeleteVertexArrays(1, &uiVAO);
+    if (uiVBO) glDeleteBuffers(1, &uiVBO);
+    uiBatchShader.reset();
+}
+
+// Draw Call Flush
+static void flushUIBatch() {
+    if (uiBatchBuffer.empty()) return;
+
+    uiBatchShader->use();
+    uiBatchShader->setMat4("projection", glm::value_ptr(uiProjection));
+    uiBatchShader->setInt("textTexture", 0);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, FontRenderer::getFontTexture());
+
+    glBindVertexArray(uiVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVBO);
+    glBufferData(GL_ARRAY_BUFFER, uiBatchBuffer.size() * sizeof(UIVertex), uiBatchBuffer.data(), GL_DYNAMIC_DRAW);
+
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)uiBatchBuffer.size());
+
+    glBindVertexArray(0);
+    uiBatchBuffer.clear();
+}
+
 static void drawRect(float x, float y, float width, float height,
 	float r, float g, float b, float a = 1.0f, bool filled = true) {
 
-    uiShader->use();
-    uiShader->setVec4("color", r, g, b, a);
-    uiShader->setMat4("projection", glm::value_ptr(uiProjection));
-    uiShader->setMat4("model", glm::value_ptr(glm::mat4(1.0f)));
-
-    float vertices[] = {
-        x, y,
-        x, y + height,
-        x + width, y + height,
-        x + width, y
-    };
-
-    glBindBuffer(GL_ARRAY_BUFFER, uiVBO);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    glBindVertexArray(uiVAO);
+    // Mode 1.0 = Rect
     if (filled) {
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        // 2 Triangles
+        uiBatchBuffer.push_back({x, y, 0, 0, r, g, b, a, 1.0f});
+        uiBatchBuffer.push_back({x, y + height, 0, 0, r, g, b, a, 1.0f});
+        uiBatchBuffer.push_back({x + width, y + height, 0, 0, r, g, b, a, 1.0f});
+
+        uiBatchBuffer.push_back({x, y, 0, 0, r, g, b, a, 1.0f});
+        uiBatchBuffer.push_back({x + width, y + height, 0, 0, r, g, b, a, 1.0f});
+        uiBatchBuffer.push_back({x + width, y, 0, 0, r, g, b, a, 1.0f});
     } else {
-        glDrawArrays(GL_LINE_LOOP, 0, 4);
+        // Outline (4 thin filled rects)
+        float t = 1.0f; // thickness
+        // Top
+        drawRect(x, y, width, t, r, g, b, a, true);
+        // Bottom
+        drawRect(x, y + height - t, width, t, r, g, b, a, true);
+        // Left
+        drawRect(x, y, t, height, r, g, b, a, true);
+        // Right
+        drawRect(x + width - t, y, t, height, r, g, b, a, true);
     }
-    glBindVertexArray(0);
 }
 
 static void drawButton(const std::string& label, float x, float y, float width, float height,
@@ -145,7 +189,8 @@ static void drawButton(const std::string& label, float x, float y, float width, 
 	float textWidth = FontRenderer::getTextWidth(label, 1.0f);
 	float textX = x + (width - textWidth) * 0.5f;
 	float textY = y + (height * 0.5f) - 8.0f; // approximate center
-	FontRenderer::renderText(label, textX, textY, 1.0f, 0.95f, 0.95f, 1.0f);
+
+    FontRenderer::appendText(label, textX, textY, 1.0f, 0.95f, 0.95f, 1.0f, 1.0f, uiBatchBuffer);
 
 	buttons.push_back({ x, y, width, height, id });
 }
@@ -207,7 +252,7 @@ void applyUIChangesToConfigs(const UIState& uiState, GalaxyConfig& galaxyConfig,
 
 static void drawNumberInput(const std::string& label, int value, float x, float y, float width,
 	ButtonID incID, ButtonID decID, ButtonID resetID, bool hoveredInc, bool hoveredDec, bool hoveredReset) {
-	FontRenderer::renderText(label, x, y, 1.1f, 0.85f, 0.85f, 0.95f);
+	FontRenderer::appendText(label, x, y, 1.1f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 
 	float inputY = y + 22.0f;
 	float btnSize = 28.0f;
@@ -219,7 +264,7 @@ static void drawNumberInput(const std::string& label, int value, float x, float 
 	std::stringstream ss;
 	ss << value;
 
-	FontRenderer::renderText(ss.str(), x + 10, inputY + 7, 1.2f, 1.0f, 1.0f, 1.0f);
+    FontRenderer::appendText(ss.str(), x + 10, inputY + 7, 1.2f, 1.0f, 1.0f, 1.0f, 1.0f, uiBatchBuffer);
 
 	drawButton("-", x + inputWidth + 5, inputY, btnSize, 30.0f, decID, hoveredDec);
 	drawButton("+", x + inputWidth + btnSize + 10, inputY, btnSize, 30.0f, incID, hoveredInc);
@@ -229,7 +274,7 @@ static void drawNumberInput(const std::string& label, int value, float x, float 
 static void drawFloatInput(const std::string& label, float value, float x, float y, float width,
 	ButtonID incID, ButtonID decID, ButtonID resetID, bool hoveredInc, bool hoveredDec, bool hoveredReset) {
 
-	FontRenderer::renderText(label, x, y, 1.1f, 0.85f, 0.85f, 0.95f);
+	FontRenderer::appendText(label, x, y, 1.1f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 
 	float inputY = y + 22.0f;
 	float btnSize = 28.0f;
@@ -241,7 +286,7 @@ static void drawFloatInput(const std::string& label, float value, float x, float
 	std::stringstream ss;
 	ss << std::fixed << std::setprecision(1) << value;
 
-	FontRenderer::renderText(ss.str(), x + 10, inputY + 7, 1.2f, 1.0f, 1.0f, 1.0f);
+    FontRenderer::appendText(ss.str(), x + 10, inputY + 7, 1.2f, 1.0f, 1.0f, 1.0f, 1.0f, uiBatchBuffer);
 
 	drawButton("-", x + inputWidth + 5, inputY, btnSize, 30.0f, decID, hoveredDec);
 	drawButton("+", x + inputWidth + btnSize + 10, inputY, btnSize, 30.0f, incID, hoveredInc);
@@ -264,7 +309,7 @@ static void drawToggle(const std::string& label, bool value, float x, float y,
 		drawRect(x + 6, y + 6, boxSize - 12, boxSize - 12, 0.3f, 0.8f, 0.5f, 1.0f);
 	}
 
-	FontRenderer::renderText(label, x + boxSize + 12, y + 3, 1.1f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText(label, x + boxSize + 12, y + 3, 1.1f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 
 	buttons.push_back({ x, y, boxSize, boxSize, toggleID });
 }
@@ -272,7 +317,6 @@ static void drawToggle(const std::string& label, bool value, float x, float y,
 void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	if (!uiState.isVisible) return;
 
-    if (!uiShader) initUI();
     // Ensure font init
     FontRenderer::initFont(screenWidth, screenHeight);
 
@@ -280,6 +324,8 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
     uiProjection = glm::ortho(0.0f, (float)screenWidth, (float)screenHeight, 0.0f);
 
 	buttons.clear();
+    // Ensure buffer is cleared at start of frame
+    uiBatchBuffer.clear();
 
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
@@ -299,10 +345,10 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	float currentY = panelY + padding;
 	float itemX = panelX + padding;
 
-	FontRenderer::renderText("SIMULATION PARAMETERS", itemX, currentY, 1.4f, 0.4f, 0.8f, 1.0f);
+    FontRenderer::appendText("SIMULATION PARAMETERS", itemX, currentY, 1.4f, 0.4f, 0.8f, 1.0f, 1.0f, uiBatchBuffer);
 	currentY += 35.0f;
 
-	FontRenderer::renderText("Galaxy Seed:", itemX, currentY, 1.1f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Galaxy Seed:", itemX, currentY, 1.1f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 25.0f;
 
 	std::stringstream seedStr;
@@ -311,7 +357,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	float seedBoxWidth = contentWidth - 85.0f;
 	drawRect(itemX, currentY, seedBoxWidth, 32.0f, 0.08f, 0.08f, 0.1f, 0.95f);
 	drawRect(itemX, currentY, seedBoxWidth, 32.0f, 0.4f, 0.45f, 0.5f, 0.8f, false);
-	FontRenderer::renderText(seedStr.str(), itemX + 10, currentY + 8, 1.2f, 1.0f, 1.0f, 1.0f);
+    FontRenderer::appendText(seedStr.str(), itemX + 10, currentY + 8, 1.2f, 1.0f, 1.0f, 1.0f, 1.0f, uiBatchBuffer);
 
 	bool hoveredCopy = (mouseX >= itemX + seedBoxWidth + 10 && mouseX <= itemX + contentWidth &&
 		mouseY >= currentY && mouseY <= currentY + 32);
@@ -333,7 +379,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 		isHovered(BTN_STAR_INC), isHovered(BTN_STAR_DEC), isHovered(BTN_STAR_RESET));
 	currentY += 70.0f;
 
-	FontRenderer::renderText("Simulation:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Simulation:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 30.0f;
 
 	drawFloatInput("Time Speed", uiState.tempTimeSpeed, itemX + 15, currentY, contentWidth - 15,
@@ -341,7 +387,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 		isHovered(BTN_TIME_SPEED_INC), isHovered(BTN_TIME_SPEED_DEC), isHovered(BTN_TIME_SPEED_RESET));
 	currentY += 70.0f;
 
-	FontRenderer::renderText("Black Hole:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Black Hole:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 30.0f;
 
 	drawFloatInput("Mass (Million M?)", uiState.tempBlackHoleMass, itemX + 15, currentY, contentWidth - 15,
@@ -349,7 +395,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 		isHovered(BTN_BH_MASS_INC), isHovered(BTN_BH_MASS_DEC), isHovered(BTN_BH_MASS_RESET));
 	currentY += 70.0f;
 
-	FontRenderer::renderText("Solar System:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Solar System:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 30.0f;
 
 	drawFloatInput("Scale Multiplier", uiState.tempSolarSystemScale, itemX + 15, currentY, contentWidth - 15,
@@ -357,7 +403,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 		isHovered(BTN_SS_SCALE_INC), isHovered(BTN_SS_SCALE_DEC), isHovered(BTN_SS_SCALE_RESET));
 	currentY += 70.0f;
 
-	FontRenderer::renderText("Gas Clouds:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Gas Clouds:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 30.0f;
 
 	drawNumberInput("Molecular", uiState.tempMolecularClouds, itemX + 15, currentY, contentWidth - 15,
@@ -390,7 +436,7 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 		isHovered(BTN_CORONAL_INC), isHovered(BTN_CORONAL_DEC), isHovered(BTN_CORONAL_RESET));
 	currentY += 75.0f;
 
-	FontRenderer::renderText("Options:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f);
+    FontRenderer::appendText("Options:", itemX, currentY, 1.2f, 0.85f, 0.85f, 0.95f, 1.0f, uiBatchBuffer);
 	currentY += 30.0f;
 
 	drawToggle("Enable Turbulence", uiState.tempEnableTurbulence, itemX + 15, currentY,
@@ -409,14 +455,17 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	drawButton("Apply Changes", itemX, currentY, contentWidth, 40.0f, BTN_APPLY, hoveredApply);
 	currentY += 50.0f;
 
-	FontRenderer::renderText("Press TAB to close | ESC to exit", itemX, currentY, 0.95f, 0.6f, 0.6f, 0.7f);
+    FontRenderer::appendText("Press TAB to close | ESC to exit", itemX, currentY, 0.95f, 0.6f, 0.6f, 0.7f, 1.0f, uiBatchBuffer);
 
 	// FPS Counter (Top Right)
 	std::stringstream fpsStream;
 	fpsStream << "FPS: " << static_cast<int>(uiState.fps);
 	std::string fpsStr = fpsStream.str();
 	float fpsWidth = FontRenderer::getTextWidth(fpsStr, 1.2f);
-	FontRenderer::renderText(fpsStr, screenWidth - fpsWidth - 20.0f, 20.0f, 1.2f, 0.0f, 1.0f, 0.0f);
+    FontRenderer::appendText(fpsStr, screenWidth - fpsWidth - 20.0f, 20.0f, 1.2f, 0.0f, 1.0f, 0.0f, 1.0f, uiBatchBuffer);
+
+    // FLUSH THE BATCH
+    flushUIBatch();
 
 	glEnable(GL_DEPTH_TEST);
 }

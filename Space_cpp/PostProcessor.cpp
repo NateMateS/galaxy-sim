@@ -48,7 +48,6 @@ PostProcessor::~PostProcessor() {
     mipChain.clear();
 
     glDeleteVertexArrays(1, &QuadVAO);
-    glDeleteBuffers(1, &QuadVBO);
 }
 
 void PostProcessor::InitFramebuffers() {
@@ -156,25 +155,10 @@ void PostProcessor::InitBloomMips() {
 }
 
 void PostProcessor::InitRenderData() {
-    float quadVertices[] = {
-        // positions   // texCoords
-        -1.0f,  1.0f,  0.0f, 1.0f,
-        -1.0f, -1.0f,  0.0f, 0.0f,
-         1.0f, -1.0f,  1.0f, 0.0f,
-
-        -1.0f,  1.0f,  0.0f, 1.0f,
-         1.0f, -1.0f,  1.0f, 0.0f,
-         1.0f,  1.0f,  1.0f, 1.0f
-    };
+    // Configured for Fullscreen Triangle (3 vertices generated in Vertex Shader)
     glGenVertexArrays(1, &QuadVAO);
-    glGenBuffers(1, &QuadVBO);
     glBindVertexArray(QuadVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, QuadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
 }
 
 void PostProcessor::BeginRender() {
@@ -220,7 +204,7 @@ void PostProcessor::EndRender() {
         }
 
         glBindVertexArray(QuadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
 
         // Prepare for next iteration: Current mip becomes source
         glBindTexture(GL_TEXTURE_2D, mip.texture);
@@ -247,7 +231,7 @@ void PostProcessor::EndRender() {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, nextMip.texture, 0);
 
         glBindVertexArray(QuadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 
     glDisable(GL_BLEND);
@@ -263,10 +247,10 @@ void PostProcessor::EndRender() {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, mipChain[0].texture); // Result of bloom is in Mip 0
     postShader->setInt("bloom", true);
-    postShader->setFloat("exposure", 0.5f); // Exposure level
+    postShader->setFloat("exposure", 0.015f); // Exposure level
 
     glBindVertexArray(QuadVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
 void PostProcessor::Resize(unsigned int width, unsigned int height) {
