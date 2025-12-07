@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 struct WindowConfig {
  int width;
@@ -8,6 +9,9 @@ struct WindowConfig {
 
 extern int WIDTH;
 extern int HEIGHT;
+
+using ResizeCallback = std::function<void(int, int)>;
+void setResizeCallback(ResizeCallback callback);
 
 struct GLFWwindow* initWindow(const WindowConfig& config);
 

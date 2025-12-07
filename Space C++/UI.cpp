@@ -1,6 +1,13 @@
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "UI.h"
 #include "Input.h"
 #include "FontRenderer.h"
+#include "Shader.h"
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <sstream>
@@ -8,11 +15,11 @@
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
-
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#endif
+#include <vector>
+#include <memory>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -21,6 +28,12 @@
 float g_currentBlackHoleMass = 4.3f;
 float g_currentSolarSystemScale = 500.0f;
 float g_currentTimeSpeed = 1.0f;
+
+// UI Render State
+static std::unique_ptr<Shader> uiShader;
+static unsigned int uiVAO = 0;
+static unsigned int uiVBO = 0;
+static glm::mat4 uiProjection;
 
 enum ButtonID {
 	BTN_NONE = -1,
@@ -69,27 +82,52 @@ struct ButtonRect {
 static std::vector<ButtonRect> buttons;
 static double mouseX = 0, mouseY = 0;
 
+void initUI() {
+	FontRenderer::initFont(1280, 720); // Default size, will be updated in render loop if needed
+
+    uiShader = std::make_unique<Shader>("assets/shaders/ui.vert", "assets/shaders/ui.frag");
+
+    glGenVertexArrays(1, &uiVAO);
+    glGenBuffers(1, &uiVBO);
+
+    glBindVertexArray(uiVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, uiVBO);
+    // x, y
+    glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 static void drawRect(float x, float y, float width, float height,
 	float r, float g, float b, float a = 1.0f, bool filled = true) {
-	glColor4f(r, g, b, a);
 
-	if (filled) {
-		glBegin(GL_QUADS);
-		glVertex2f(x, y);
-		glVertex2f(x + width, y);
-		glVertex2f(x + width, y + height);
-		glVertex2f(x, y + height);
-		glEnd();
-	}
-	else {
-		glLineWidth(2.0f);
-		glBegin(GL_LINE_LOOP);
-		glVertex2f(x, y);
-		glVertex2f(x + width, y);
-		glVertex2f(x + width, y + height);
-		glVertex2f(x, y + height);
-		glEnd();
-	}
+    uiShader->use();
+    uiShader->setVec4("color", r, g, b, a);
+    uiShader->setMat4("projection", glm::value_ptr(uiProjection));
+    uiShader->setMat4("model", glm::value_ptr(glm::mat4(1.0f)));
+
+    float vertices[] = {
+        x, y,
+        x, y + height,
+        x + width, y + height,
+        x + width, y
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, uiVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glBindVertexArray(uiVAO);
+    if (filled) {
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    } else {
+        glDrawArrays(GL_LINE_LOOP, 0, 4);
+    }
+    glBindVertexArray(0);
 }
 
 static void drawButton(const std::string& label, float x, float y, float width, float height,
@@ -106,14 +144,10 @@ static void drawButton(const std::string& label, float x, float y, float width, 
 
 	float textWidth = FontRenderer::getTextWidth(label, 1.0f);
 	float textX = x + (width - textWidth) * 0.5f;
-	float textY = y + (height * 0.5f) - 4.0f;
+	float textY = y + (height * 0.5f) - 8.0f; // approximate center
 	FontRenderer::renderText(label, textX, textY, 1.0f, 0.95f, 0.95f, 1.0f);
 
 	buttons.push_back({ x, y, width, height, id });
-}
-
-void initUI() {
-	FontRenderer::initFont();
 }
 
 void toggleUI(UIState& uiState) {
@@ -238,19 +272,16 @@ static void drawToggle(const std::string& label, bool value, float x, float y,
 void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	if (!uiState.isVisible) return;
 
+    if (!uiShader) initUI();
+    // Ensure font init
+    FontRenderer::initFont(screenWidth, screenHeight);
+
+    // Update global projection
+    uiProjection = glm::ortho(0.0f, (float)screenWidth, (float)screenHeight, 0.0f);
+
 	buttons.clear();
 
-	glMatrixMode(GL_PROJECTION);
-	glPushMatrix();
-	glLoadIdentity();
-	glOrtho(0, screenWidth, screenHeight, 0, -1, 1);
-
-	glMatrixMode(GL_MODELVIEW);
-	glPushMatrix();
-	glLoadIdentity();
-
 	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_LIGHTING);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -388,11 +419,6 @@ void renderUI(UIState& uiState, int screenWidth, int screenHeight) {
 	FontRenderer::renderText(fpsStr, screenWidth - fpsWidth - 20.0f, 20.0f, 1.2f, 0.0f, 1.0f, 0.0f);
 
 	glEnable(GL_DEPTH_TEST);
-
-	glMatrixMode(GL_PROJECTION);
-	glPopMatrix();
-	glMatrixMode(GL_MODELVIEW);
-	glPopMatrix();
 }
 
 void handleUIInput(GLFWwindow* window, UIState& uiState, MouseState& mouseState) {

@@ -9,6 +9,9 @@ file(GLOB SOURCES "Space C++/*.cpp" "Space C++/*.c")
 list(APPEND SOURCES "libs/glad/src/glad.c")
 
 # Include directories
+include_directories("libs")
+include_directories("libs/glm")
+include_directories("libs/stb")
 include_directories("libs/glfw/include")
 include_directories("libs/glad/include")
 include_directories("Space C++")

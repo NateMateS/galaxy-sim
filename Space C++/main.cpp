@@ -1,7 +1,10 @@
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <random>
-#include <ctime>
+#include <memory>
+#include <glm/glm.hpp>
+
 #include "Window.h"
 #include "Camera.h"
 #include "Stars.h"
@@ -10,9 +13,24 @@
 #include "GalacticGas.h"
 #include "Input.h"
 #include "UI.h"
+#include "PostProcessor.h"
+#include "TextureGenerator.h"
+#include "Shader.h"
 
-int WIDTH = 1920;
-int HEIGHT = 1080;
+int WIDTH = 1280;
+int HEIGHT = 720;
+
+// Render Resources
+std::unique_ptr<PostProcessor> postProcessor;
+std::unique_ptr<Shader> planetShader;
+std::unique_ptr<Shader> sunShader;
+std::unique_ptr<Shader> blackHoleShader;
+std::unique_ptr<Shader> gasShader;
+std::unique_ptr<Shader> orbitShader;
+
+unsigned int sunTexture = 0;
+unsigned int planetTexture = 0;
+unsigned int noiseTexture = 0;
 
 GalaxyConfig createDefaultGalaxyConfig() {
 	GalaxyConfig config;
@@ -44,28 +62,53 @@ BlackHoleConfig createDefaultBlackHoleConfig() {
 }
 
 void render(const std::vector<Star>& stars, const std::vector<BlackHole>& blackHoles,
-	const std::vector<GasCloud>& gasClouds, const Camera& camera, UIState& uiState) {
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	const std::vector<GasVertex>& darkGas, const std::vector<GasVertex>& luminousGas,
+    const Camera& camera, UIState& uiState) {
+    if (!postProcessor) {
+        fprintf(stderr, "FATAL: postProcessor is NULL in render!\n");
+        return;
+    }
 
-	setupCamera(camera, WIDTH, HEIGHT, solarSystem);
+    // 1. Render to HDR/MSAA Framebuffer
+    postProcessor->BeginRender();
+
+    glm::mat4 view, projection;
+	getCameraMatrices(camera, WIDTH, HEIGHT, solarSystem, view, projection);
 
 	RenderZone zone = calculateRenderZone(camera);
 
-	renderStars(stars, zone);
-
-	renderGalacticGas(gasClouds, zone);
-	renderBlackHoles(blackHoles, zone);
+    // Render Order: Opaque -> Transparent
 
 	if (solarSystem.isGenerated) {
-		renderSolarSystem(zone);
+		if (!sunShader) fprintf(stderr, "sunShader is NULL\n");
+		if (!planetShader) fprintf(stderr, "planetShader is NULL\n");
+		if (!orbitShader) fprintf(stderr, "orbitShader is NULL\n");
+
+		renderSolarSystem(zone, camera, view, projection, sunTexture, planetTexture, sunShader.get(), planetShader.get(), orbitShader.get());
 	}
 
-	renderUI(uiState, WIDTH, HEIGHT);
+    // Copy Depth to break Feedback Loop (Read Copy, Write Original)
+    postProcessor->CopyDepth();
+
+    // Transparent / Additive
+    // Stars (Additive)
+	renderStars(stars, zone, view, projection);
+
+    // Gas (Blend with Soft Particles)
+    // We use the MSAA depth COPY directly via sampler2DMS
+    renderGalacticGas(darkGas, luminousGas, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture, (float)WIDTH, (float)HEIGHT, zone, view, projection, gasShader.get());
+
+    // Black Holes (Blend)
+	renderBlackHoles(blackHoles, zone, camera, view, projection, noiseTexture, blackHoleShader.get());
+
+    // 2. Post-Processing (Bloom, Tone Mapping) -> Screen
+    postProcessor->EndRender();
+
+    // UI rendered on top of everything (Post-process result is just a quad)
+ 	renderUI(uiState, WIDTH, HEIGHT);
 }
 
 int main() {
-	srand(static_cast<unsigned int>(time(nullptr)));
-
 	WindowConfig windowConfig = { WIDTH, HEIGHT, "untitled Galaxy sim" };
 	GLFWwindow* window = initWindow(windowConfig);
 	if (!window) {
@@ -73,12 +116,35 @@ int main() {
 	}
 
 	setupOpenGL();
-	try {
-		initStars();
-	} catch (const std::exception& e) {
+
+    // Initialize Resources
+    postProcessor = std::make_unique<PostProcessor>(WIDTH, HEIGHT);
+
+    // Shaders
+    try {
+        initStars();
+        planetShader = std::make_unique<Shader>("assets/shaders/planet.vert", "assets/shaders/planet.frag");
+        sunShader = std::make_unique<Shader>("assets/shaders/sun.vert", "assets/shaders/sun.frag");
+        blackHoleShader = std::make_unique<Shader>("assets/shaders/blackhole.vert", "assets/shaders/blackhole.frag");
+        gasShader = std::make_unique<Shader>("assets/shaders/gas.vert", "assets/shaders/gas.frag");
+        orbitShader = std::make_unique<Shader>("assets/shaders/orbit.vert", "assets/shaders/orbit.frag");
+
+        // Uniforms setup
+        blackHoleShader->use();
+        blackHoleShader->setInt("noiseTexture", 0);
+
+        gasShader->use();
+
+    } catch (const std::exception& e) {
 		std::cerr << "Initialization failed: " << e.what() << std::endl;
 		return -1;
 	}
+
+    // Generate Textures
+    std::cout << "Generating Procedural Textures..." << std::endl;
+    sunTexture = TextureGenerator::GenerateSunTexture(512, 512, 42);
+    planetTexture = TextureGenerator::GeneratePlanetTexture(512, 512, 123, 0.55f, 0.0f, 0.1f, 0.5f, 0.1f, 0.6f, 0.2f); // Earth-like
+    noiseTexture = TextureGenerator::GenerateNoiseTexture(256, 256, 5.0f, 0.5f, 4, 999);
 
 	// Generate galaxy
 	GalaxyConfig galaxyConfig = createDefaultGalaxyConfig();
@@ -92,12 +158,14 @@ int main() {
 		galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 	GasConfig gasConfig = createDefaultGasConfig();
-	std::vector<GasCloud> gasClouds;
-	generateGalacticGas(gasClouds, gasConfig, galaxyConfig.seed,
+	std::vector<GasVertex> darkGasVertices;
+    std::vector<GasVertex> luminousGasVertices;
+	generateGalacticGas(darkGasVertices, luminousGasVertices, gasConfig, galaxyConfig.seed,
 		galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 	generateSolarSystem();
 
+	std::cout << "Initializing Camera..." << std::endl;
 	Camera camera;
 	camera.zoomLevel = 0.1;
 	camera.zoom = camera.zoomLevel;
@@ -107,14 +175,20 @@ int main() {
 	camera.posX = 0.0;
 	camera.posY = 1000.0 * camera.zoom;
 	camera.posZ = 1500.0 * camera.zoom;
-	camera.pitch = -0.58; // ~33 degrees down
-	camera.yaw = 0.0;
+    // Initial rotation: ~33 degrees down (-0.58 rad) around X axis
+    camera.orientation = glm::angleAxis(-0.58f, glm::vec3(1.0f, 0.0f, 0.0f));
 
 	MouseState mouseState = { WIDTH / 2.0, HEIGHT / 2.0, true };
 
 	initInput(window, camera, mouseState);
 
-	initUI();
+	try {
+		std::cout << "Initializing UI..." << std::endl;
+		initUI();
+		std::cout << "UI Initialized." << std::endl;
+	} catch (const std::exception& e) {
+		std::cerr << "UI Initialization failed: " << e.what() << std::endl;
+	}
 	UIState uiState = {};
 	uiState.isVisible = false;
 	uiState.hoveredButton = -1;
@@ -127,11 +201,24 @@ int main() {
 
 	setGlobalUIState(&uiState);
 
+    // Register resize callback
+    setResizeCallback([](int w, int h) {
+        if (postProcessor) {
+            std::cout << "Resizing PostProcessor..." << std::endl;
+            postProcessor->Resize(w, h);
+        }
+    });
+
 	double lastTime = glfwGetTime();
 	double fpsTimer = 0.0;
 	int frameCount = 0;
 
 	// Main loop
+	if (!window) {
+		std::cerr << "FATAL: Window is NULL!" << std::endl;
+		return -1;
+	}
+
 	while (!glfwWindowShouldClose(window)) {
 		double currentTime = glfwGetTime();
 		double deltaTime = currentTime - lastTime;
@@ -150,7 +237,7 @@ int main() {
 
 		// Star positions are now updated in the vertex shader
 		updateBlackHoles(blackHoles, adjustedDeltaTime);
-		updateGalacticGas(gasClouds, adjustedDeltaTime);
+		// updateGalacticGas removed (Moved to GPU)
 		updatePlanets(adjustedDeltaTime);
 
 		handleUIInput(window, uiState, mouseState);
@@ -166,8 +253,9 @@ int main() {
 			generateBlackHoles(blackHoles, blackHoleConfig, galaxyConfig.seed,
 				galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
-			gasClouds.clear();
-			generateGalacticGas(gasClouds, gasConfig, galaxyConfig.seed,
+			darkGasVertices.clear();
+            luminousGasVertices.clear();
+			generateGalacticGas(darkGasVertices, luminousGasVertices, gasConfig, galaxyConfig.seed,
 				galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 			std::cout << "Galaxy regenerated with new parameters" << std::endl;
@@ -175,13 +263,15 @@ int main() {
 		}
 
 		processInput(window, camera, &uiState);
-		render(stars, blackHoles, gasClouds, camera, uiState);
+
+		render(stars, blackHoles, darkGasVertices, luminousGasVertices, camera, uiState);
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
 
 	cleanupStars();
+    setResizeCallback(nullptr);
 	cleanup(window);
 	return 0;
 }

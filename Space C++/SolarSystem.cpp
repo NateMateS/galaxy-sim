@@ -1,9 +1,14 @@
 #include "SolarSystem.h"
 #include "UI.h"
+#include "Shader.h"
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <cmath>
 #include <iostream>
 #include <random>
+#include <vector>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 const PlanetData PLANET_DATA[NUM_PLANETS] = {
     {"Mercury", 0.39, 0.383, 0.7f, 0.7f, 0.7f},
@@ -18,6 +23,117 @@ const PlanetData PLANET_DATA[NUM_PLANETS] = {
 SolarSystem solarSystem = {0.0, 0.0, 0.0, false};
 Sun sun = {0.0, 0.0, 0.0, 2.0};
 std::vector<Planet> planets;
+
+// Render Resources
+static unsigned int sphereVAO = 0;
+static unsigned int sphereIndexCount = 0;
+static unsigned int orbitVAO = 0;
+static unsigned int orbitPointCount = 0;
+
+void initSolarSystemRender() {
+    if (sphereVAO != 0) return;
+
+    // --- Sphere (Sun/Planets) ---
+    glGenVertexArrays(1, &sphereVAO);
+    unsigned int vbo, ebo;
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+
+    std::vector<float> data;
+    std::vector<unsigned int> indices;
+
+    const unsigned int X_SEGMENTS = 64;
+    const unsigned int Y_SEGMENTS = 64;
+    const float PI = 3.14159265359f;
+
+    for (unsigned int x = 0; x <= X_SEGMENTS; ++x) {
+        for (unsigned int y = 0; y <= Y_SEGMENTS; ++y) {
+            float xSegment = (float)x / (float)X_SEGMENTS;
+            float ySegment = (float)y / (float)Y_SEGMENTS;
+            float xPos = std::cos(xSegment * 2.0f * PI) * std::sin(ySegment * PI);
+            float yPos = std::cos(ySegment * PI);
+            float zPos = std::sin(xSegment * 2.0f * PI) * std::sin(ySegment * PI);
+
+            // Pos
+            data.push_back(xPos);
+            data.push_back(yPos);
+            data.push_back(zPos);
+            // Normal
+            data.push_back(xPos);
+            data.push_back(yPos);
+            data.push_back(zPos);
+            // UV
+            data.push_back(xSegment);
+            data.push_back(ySegment);
+        }
+    }
+
+    bool oddRow = false;
+    for (unsigned int y = 0; y < Y_SEGMENTS; ++y) {
+        if (!oddRow) {
+            for (unsigned int x = 0; x <= X_SEGMENTS; ++x) {
+                indices.push_back(y * (X_SEGMENTS + 1) + x);
+                indices.push_back((y + 1) * (X_SEGMENTS + 1) + x);
+            }
+        } else {
+            for (int x = X_SEGMENTS; x >= 0; --x) {
+                indices.push_back((y + 1) * (X_SEGMENTS + 1) + x);
+                indices.push_back(y * (X_SEGMENTS + 1) + x);
+            }
+        }
+        oddRow = !oddRow;
+    }
+    sphereIndexCount = (unsigned int)indices.size();
+
+    glBindVertexArray(sphereVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), &data[0], GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+
+    float stride = (3 + 3 + 2) * sizeof(float);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (int)stride, (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, (int)stride, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, (int)stride, (void*)(6 * sizeof(float)));
+
+    // --- Orbits (Unit Circle) ---
+    glGenVertexArrays(1, &orbitVAO);
+    unsigned int orbitVBO;
+    glGenBuffers(1, &orbitVBO);
+
+    std::vector<float> orbitData;
+    orbitPointCount = 128;
+    for (unsigned int i = 0; i < orbitPointCount; ++i) {
+        float angle = (float)i / (float)orbitPointCount * 2.0f * PI;
+        orbitData.push_back(cos(angle)); // x
+        orbitData.push_back(0.0f);       // y
+        orbitData.push_back(sin(angle)); // z
+    }
+
+    glBindVertexArray(orbitVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, orbitVBO);
+    glBufferData(GL_ARRAY_BUFFER, orbitData.size() * sizeof(float), orbitData.data(), GL_STATIC_DRAW);
+
+    // Position attribute (Location 0)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+}
+
+void cleanupSolarSystemRender() {
+    if (sphereVAO != 0) {
+        glDeleteVertexArrays(1, &sphereVAO);
+        sphereVAO = 0;
+    }
+    if (orbitVAO != 0) {
+        glDeleteVertexArrays(1, &orbitVAO);
+        orbitVAO = 0;
+    }
+}
 
 RenderZone calculateRenderZone(const Camera &camera)
 {
@@ -57,10 +173,14 @@ void generateSolarSystem()
 {
     std::cout << "Generating solar system..." << std::endl;
 
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+
     // radius 200-600 to avoid bulge and edge
-    double radius = 200.0 + (rand() / (double)RAND_MAX) * 400.0;
-    double angle = (rand() / (double)RAND_MAX) * 2.0 * M_PI;
-    double verticalOffset = ((rand() / (double)RAND_MAX) - 0.5) * 20.0;
+    double radius = 200.0 + dist(rng) * 400.0;
+    double angle = dist(rng) * 2.0 * M_PI;
+    double verticalOffset = (dist(rng) - 0.5) * 20.0;
 
     solarSystem.centerX = radius * cos(angle);
     solarSystem.centerY = verticalOffset;
@@ -81,7 +201,7 @@ void generateSolarSystem()
         planet.r = PLANET_DATA[i].r;
         planet.g = PLANET_DATA[i].g;
         planet.b = PLANET_DATA[i].b;
-        planet.angle = ((double)rand() / RAND_MAX) * 2.0 * M_PI;
+        planet.angle = dist(rng) * 2.0 * M_PI;
         planet.orbitalSpeed = 0.0005 / sqrt(planet.orbitRadius);
 
         planet.x = sun.x + planet.orbitRadius * cos(planet.angle);
@@ -110,101 +230,97 @@ void updatePlanets(double deltaTime)
     }
 }
 
-void drawSphere(float radius, int segments)
+void renderSolarSystem(const RenderZone &zone, const Camera& camera,
+    const glm::mat4& view, const glm::mat4& projection,
+    unsigned int sunTexture, unsigned int planetTexture,
+    Shader* sunShader, Shader* planetShader, Shader* orbitShader)
 {
-    for (int lat = 0; lat < segments; lat++)
-    {
-        float theta1 = lat * M_PI / segments;
-        float theta2 = (lat + 1) * M_PI / segments;
+    if (sphereVAO == 0) initSolarSystemRender();
 
-        glBegin(GL_QUAD_STRIP);
-        for (int lon = 0; lon <= segments; lon++)
-        {
-            float phi = lon * 2 * M_PI / segments;
-
-            float x1 = radius * sin(theta1) * cos(phi);
-            float y1 = radius * cos(theta1);
-            float z1 = radius * sin(theta1) * sin(phi);
-
-            float x2 = radius * sin(theta2) * cos(phi);
-            float y2 = radius * cos(theta2);
-            float z2 = radius * sin(theta2) * sin(phi);
-
-            glVertex3f(x1, y1, z1);
-            glVertex3f(x2, y2, z2);
-        }
-        glEnd();
-    }
-}
-
-void renderSolarSystem(const RenderZone &zone)
-{
-    double scale = zone.solarSystemScaleMultiplier;
-
-    glPushMatrix();
-    glTranslated(sun.x, sun.y, sun.z);
-    glScaled(scale, scale, scale);
+    // --- Render Sun ---
+    sunShader->use();
+    sunShader->setMat4("view", glm::value_ptr(view));
+    sunShader->setMat4("projection", glm::value_ptr(projection));
+    sunShader->setFloat("time", (float)glfwGetTime());
 
     float sunRadius = 0.01f;
-    if (zone.zoomLevel > 1000.0)
-        sunRadius = 0.05f;
-    else if (zone.zoomLevel > 500.0)
-        sunRadius = 0.04f;
-    else if (zone.zoomLevel > 100.0)
-        sunRadius = 0.03f;
-    else if (zone.zoomLevel > 10.0)
-        sunRadius = 0.02f;
-    else if (zone.zoomLevel > 1.0)
-        sunRadius = 0.015f;
+    if (zone.zoomLevel > 1000.0) sunRadius = 0.05f;
+    else if (zone.zoomLevel > 500.0) sunRadius = 0.04f;
+    else if (zone.zoomLevel > 100.0) sunRadius = 0.03f;
+    else if (zone.zoomLevel > 10.0) sunRadius = 0.02f;
+    else if (zone.zoomLevel > 1.0) sunRadius = 0.015f;
 
-    glColor3f(1.0f, 1.0f, 0.3f);
-    drawSphere(sunRadius / scale, 16);
-    glPopMatrix();
+    // Model Matrix: Translate * Scale
+    glm::mat4 sunModel = glm::mat4(1.0f);
+    sunModel = glm::translate(sunModel, glm::vec3((float)sun.x, (float)sun.y, (float)sun.z));
+    sunModel = glm::scale(sunModel, glm::vec3(sunRadius));
+
+    sunShader->setMat4("model", glm::value_ptr(sunModel));
+    sunShader->setVec3("viewPos", (float)camera.posX, (float)camera.posY, (float)camera.posZ);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sunTexture);
+    sunShader->setInt("sunTexture", 0);
+
+    glBindVertexArray(sphereVAO);
+    glDrawElements(GL_TRIANGLE_STRIP, sphereIndexCount, GL_UNSIGNED_INT, 0);
+
+    // --- Render Planets ---
+    planetShader->use();
+    planetShader->setMat4("view", glm::value_ptr(view));
+    planetShader->setMat4("projection", glm::value_ptr(projection));
+    planetShader->setVec3("lightPos", (float)sun.x, (float)sun.y, (float)sun.z);
+    planetShader->setVec3("viewPos", (float)camera.posX, (float)camera.posY, (float)camera.posZ);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, planetTexture);
+    planetShader->setInt("planetTexture", 0);
 
     for (const auto &planet : planets)
     {
-        glPushMatrix();
-        glTranslated(sun.x, sun.y, sun.z);
-        glScaled(scale, scale, scale);
-
-        double relX = (planet.x - sun.x) / scale;
-        double relY = (planet.y - sun.y) / scale;
-        double relZ = (planet.z - sun.z) / scale;
-        glTranslated(relX, relY, relZ);
-
         float planetRadius = 0.002f;
-        if (zone.zoomLevel > 1000.0)
-            planetRadius = 0.003f;
-        else if (zone.zoomLevel > 500.0)
-            planetRadius = 0.003f;
-        else if (zone.zoomLevel > 100.0)
-            planetRadius = 0.0025f;
-        else if (zone.zoomLevel > 50.0)
-            planetRadius = 0.002f;
-        else if (zone.zoomLevel > 10.0)
-            planetRadius = 0.002f;
+        if (zone.zoomLevel > 1000.0) planetRadius = 0.003f;
+        else if (zone.zoomLevel > 500.0) planetRadius = 0.003f;
+        else if (zone.zoomLevel > 100.0) planetRadius = 0.0025f;
+        else if (zone.zoomLevel > 50.0) planetRadius = 0.002f;
+        else if (zone.zoomLevel > 10.0) planetRadius = 0.002f;
 
-        glColor3f(planet.r, planet.g, planet.b);
-        drawSphere(planetRadius / scale, 12);
-        glPopMatrix();
+        glm::mat4 planetModel = glm::mat4(1.0f);
+        planetModel = glm::translate(planetModel, glm::vec3((float)planet.x, (float)planet.y, (float)planet.z));
+        planetModel = glm::scale(planetModel, glm::vec3(planetRadius));
 
-        if (zone.renderOrbits)
-        {
-            glPushMatrix();
-            glTranslated(sun.x, sun.y, sun.z);
-            glScaled(scale, scale, scale);
+        planetShader->setMat4("model", glm::value_ptr(planetModel));
 
-            glBegin(GL_LINE_LOOP);
-            glColor3f(0.3f, 0.3f, 0.3f);
-            for (int i = 0; i < 64; i++)
-            {
-                double angle = (i / 64.0) * 2.0 * M_PI;
-                double x = planet.orbitRadius * cos(angle) / scale;
-                double z = planet.orbitRadius * sin(angle) / scale;
-                glVertex3f(x, 0, z);
-            }
-            glEnd();
-            glPopMatrix();
-        }
+        // Simple Atmosphere Color based on planet color
+        planetShader->setVec3("atmosphereColor", planet.r * 0.5f, planet.g * 0.5f, planet.b * 0.8f);
+
+        glDrawElements(GL_TRIANGLE_STRIP, sphereIndexCount, GL_UNSIGNED_INT, 0);
     }
+
+    // --- Render Orbits (Modern GL) ---
+    if (zone.renderOrbits && orbitShader)
+    {
+        orbitShader->use();
+        orbitShader->setMat4("view", glm::value_ptr(view));
+        orbitShader->setMat4("projection", glm::value_ptr(projection));
+        orbitShader->setVec3("color", 0.2f, 0.2f, 0.2f); // Dim orbit lines
+
+        glBindVertexArray(orbitVAO);
+
+        for (const auto &planet : planets)
+        {
+             // Model Matrix for Orbit:
+             // Translate to Sun Position -> Scale by Orbit Radius
+             glm::mat4 orbitModel = glm::mat4(1.0f);
+             orbitModel = glm::translate(orbitModel, glm::vec3((float)sun.x, (float)sun.y, (float)sun.z));
+             // Scale (x, y, z) = (radius, 1, radius) because orbit is on XZ plane
+             orbitModel = glm::scale(orbitModel, glm::vec3((float)planet.orbitRadius, 1.0f, (float)planet.orbitRadius));
+
+             orbitShader->setMat4("model", glm::value_ptr(orbitModel));
+             glDrawArrays(GL_LINE_LOOP, 0, orbitPointCount);
+        }
+        glBindVertexArray(0);
+    }
+
+    glUseProgram(0);
 }

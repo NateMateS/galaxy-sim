@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include "Camera.h"
+#include <glm/glm.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -50,7 +51,14 @@ extern SolarSystem solarSystem;
 extern Sun sun;
 extern std::vector<Planet> planets;
 
+// New Rendering Resources
+void initSolarSystemRender();
+void cleanupSolarSystemRender();
+
 RenderZone calculateRenderZone(const Camera& camera);
 void generateSolarSystem();
 void updatePlanets(double deltaTime);
-void renderSolarSystem(const RenderZone& zone);
+void renderSolarSystem(const RenderZone& zone, const Camera& camera,
+    const glm::mat4& view, const glm::mat4& projection,
+    unsigned int sunTexture, unsigned int planetTexture,
+    class Shader* sunShader, class Shader* planetShader, class Shader* orbitShader);

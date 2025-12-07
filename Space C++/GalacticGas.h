@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <glm/glm.hpp>
 
 struct RenderZone;
 
@@ -12,28 +13,23 @@ enum class GasType {
     CORONAL
 };
 
-struct GasCloud {
-    float x, y, z;
-    GasType type;
-    float mass;              // solar masses
-    float smoothingLength;   // SPH-style smoothing kernel radius
-    float temperature;       // In Kelvin
-    float density;           // Relative density (0.0-1.0)
+// Flattened stateless particle structure for GPU simulation
+struct GasVertex {
+    // 1. Orbital Mechanics (vec3: radius, angle, velocity)
+    float orbitalRadius;
+    float initialAngle;      // Where the cloud started
+    float angularVelocity;   // How fast it orbits the galaxy
 
-    float r, g, b;
-    float alpha;
+    // 2. Local Shape (vec3: x, y, z offsets from cloud center)
+    float offsetX, offsetY, offsetZ;
 
-    float orbitalRadius;     // distance from galactic center
-    float angle;             // current angle in XZ plane
-    float angularVelocity;   // rotation speed (radians per second)
+    // 3. Visuals (vec4: r, g, b, a)
+    float r, g, b, a;
 
-    // turbulence = random small-scale motion
-    float turbulencePhase;   // random phase for animated turbulence
-    float turbulenceSpeed;   // how fast the turbulence evolves
-
-    bool isDarkLane;         // true for molecular clouds that absorb light (render as dark)
-    float elongation;        // stretch factor
-    float rotationAngle;     // orientation angle for elongated clouds
+    // 4. Animation Params (vec3: size, turbulencePhase, turbulenceSpeed)
+    float size;
+    float turbulencePhase;
+    float turbulenceSpeed;
 };
 
 struct GasConfig {
@@ -43,7 +39,7 @@ struct GasConfig {
     int numWarmIonizedClouds;
     int numHotIonizedClouds;
     int numCoronalClouds;
-    
+
     // distribution
     float molecularScaleHeight;
     float neutralScaleHeight;
@@ -56,9 +52,11 @@ struct GasConfig {
 
 GasConfig createDefaultGasConfig();
 
-void generateGalacticGas(std::vector<GasCloud>& gasClouds, const GasConfig& config, unsigned int seed, double diskRadius, double bulgeRadius);
-void updateGalacticGas(std::vector<GasCloud>& gasClouds, double deltaTime);
-void renderGalacticGas(const std::vector<GasCloud>& gasClouds, const RenderZone& zone);
+// Note: This now generates static vertices instead of dynamic objects
+void generateGalacticGas(std::vector<GasVertex>& darkVertices, std::vector<GasVertex>& luminousVertices, const GasConfig& config, unsigned int seed, double diskRadius, double bulgeRadius);
+
+// Render needs time for simulation and depth map for soft particles
+void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices, float time, unsigned int depthTexture, float screenWidth, float screenHeight, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection, class Shader* gasShader);
 
 const float MOLECULAR_TEMP = 20.0f;          // 10-50 K
 const float COLD_NEUTRAL_TEMP = 80.0f;       // 50-100 K

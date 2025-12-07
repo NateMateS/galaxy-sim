@@ -37,11 +37,20 @@ void mouseMoveCallback(GLFWwindow* window, double xpos, double ypos) {
 	g_mouseState->lastX = xpos;
 	g_mouseState->lastY = ypos;
 
-	g_camera->yaw -= xoffset * g_camera->lookSpeed;
-	g_camera->pitch += yoffset * g_camera->lookSpeed;
+    // FPS-style rotation (Quaternion based)
+    // Yaw around World Up (0,1,0) to keep horizon stable.
+    // Pitch around Local Right (1,0,0).
+    float yaw = (float)(-xoffset * g_camera->lookSpeed);
+    float pitch = (float)(yoffset * g_camera->lookSpeed);
 
-	if (g_camera->pitch > 1.5) g_camera->pitch = 1.5;
-	if (g_camera->pitch < -1.5) g_camera->pitch = -1.5;
+    glm::quat qYaw = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
+    glm::quat qPitch = glm::angleAxis(pitch, glm::vec3(1, 0, 0));
+
+    // Apply Yaw globally (World Up)
+    g_camera->orientation = glm::normalize(qYaw * g_camera->orientation);
+
+    // Apply Pitch locally (Local Right)
+    g_camera->orientation = glm::normalize(g_camera->orientation * qPitch);
 }
 
 void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {

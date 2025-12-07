@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <glm/glm.hpp>
 
 struct RenderZone;
 
@@ -16,7 +17,6 @@ struct Star {
 
 // Size of Star struct: 10 floats = 40 bytes
 // Layout: x, y, z, r, g, b, brightness, radius, angle, angularVelocity
-
 struct GalaxyConfig {
 	int numStars;
 	int numSpiralArms;
@@ -36,4 +36,4 @@ void initStars();
 void cleanupStars();
 void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config);
 void uploadStarData(const std::vector<Star>& stars);
-void renderStars(const std::vector<Star>& stars, const RenderZone& zone);
+void renderStars(const std::vector<Star>& stars, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection);

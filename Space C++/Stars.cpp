@@ -7,6 +7,7 @@
 #include <cmath>
 #include <random>
 #include <memory>
+#include <glm/gtc/type_ptr.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -332,11 +333,11 @@ void generateStarField(std::vector<Star>& stars, const GalaxyConfig& config) {
 }
 
 
-void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
+void renderStars(const std::vector<Star>& stars, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection) {
     if (!starShader) return;
 
-    // Enable point sprites for gl_PointCoord to work in Compatibility Profile
-    glEnable(GL_POINT_SPRITE);
+    // Note: GL_POINT_SPRITE is deprecated in Core Profile (3.2+) and always enabled.
+    // Texture coord replacement is handled by gl_PointCoord automatically.
     // Ensure program point size is enabled (usually is, but good for safety)
     glEnable(GL_PROGRAM_POINT_SIZE);
 
@@ -349,14 +350,8 @@ void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
 
     starShader->use();
 
-    // Grab current legacy matrices
-    float modelview[16];
-    float projection[16];
-    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
-    glGetFloatv(GL_PROJECTION_MATRIX, projection);
-
-    starShader->setMat4("view", modelview);
-    starShader->setMat4("projection", projection);
+    starShader->setMat4("view", glm::value_ptr(view));
+    starShader->setMat4("projection", glm::value_ptr(projection));
     starShader->setFloat("time", (float)glfwGetTime());
     starShader->setFloat("screenHeight", (float)HEIGHT);
 
@@ -370,6 +365,5 @@ void renderStars(const std::vector<Star>& stars, const RenderZone& zone) {
 
     // Cleanup state
     glDepthMask(GL_TRUE); // Re-enable depth writing
-    glDisable(GL_POINT_SPRITE);
     glDisable(GL_BLEND);
 }

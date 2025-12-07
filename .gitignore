@@ -361,6 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# New stuffs
 /libs/glad
 /libs/glfw
+/libs/glm
+/libs/stb
 /build
