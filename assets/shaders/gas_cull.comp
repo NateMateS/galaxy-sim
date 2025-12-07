@@ -1,0 +1,126 @@
+#version 430 core
+#extension GL_KHR_shader_subgroup_ballot : require
+layout(local_size_x = 256) in;
+
+// Aligned to 64 bytes
+struct GasInput {
+    vec4 orbital; // x: radius, y: angle, z: velocity, w: pad
+    vec4 offset;  // xyz: offset, w: pad
+    vec4 color;   // rgba
+    vec4 params;  // x: size, y: turbPhase, z: turbSpeed, w: pad
+};
+
+struct GasRender {
+    vec4 position_depth; // xyz: view_space_pos, w: linear_depth
+    vec4 color;
+    float size;
+    float _pad0;
+    float _pad1;
+    float _pad2; // Align to 32 bytes (vec4 + vec4 + vec4)
+};
+
+struct DrawCommand {
+    uint count;
+    uint instanceCount;
+    uint first;
+    uint baseInstance;
+};
+
+layout(std430, binding = 0) readonly buffer InputBuffer {
+    GasInput particles[];
+};
+
+layout(std430, binding = 1) writeonly buffer OutputBuffer {
+    GasRender visibleParticles[];
+};
+
+layout(std430, binding = 2) buffer IndirectBuffer {
+    DrawCommand cmd;
+};
+
+layout(std140, binding = 0) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPos;
+    float time;
+};
+
+uniform float pointScale;
+
+bool isVisible(vec3 viewPos, float radius) {
+    vec4 clipPos = projection * vec4(viewPos, 1.0);
+    vec3 ndc = clipPos.xyz / clipPos.w;
+
+    // Check if in front of camera and roughly within screen bounds
+    return clipPos.w > 0.0 && all(lessThan(abs(ndc), vec3(1.3))); // Generous margin for large particles
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= particles.length()) return;
+
+    GasInput p = particles[idx];
+
+    // --- Physics Simulation (Match gas.vert) ---
+    float orbitalRadius = p.orbital.x;
+    float initialAngle = p.orbital.y;
+    float angularVelocity = p.orbital.z;
+
+    // 1. Orbital Angle
+    float currentAngle = initialAngle + angularVelocity * time;
+    float cosA = cos(currentAngle);
+    float sinA = sin(currentAngle);
+
+    vec3 cloudCenter = vec3(orbitalRadius * cosA, 0.0, orbitalRadius * sinA);
+
+    // 2. Rotate Local Offset
+    float localX = p.offset.x * cosA - p.offset.z * sinA;
+    float localZ = p.offset.x * sinA + p.offset.z * cosA;
+    vec3 rotatedOffset = vec3(localX, p.offset.y, localZ);
+
+    // 3. Turbulence
+    float turbulence = sin(time * p.params.z + p.params.y);
+    vec3 turbOffset = vec3(0.0, turbulence * 2.0, 0.0);
+
+    // 4. World Position
+    vec3 worldPos = cloudCenter + rotatedOffset + turbOffset;
+
+    // 5. View Position
+    vec4 viewPosVec = view * vec4(worldPos, 1.0);
+    vec3 viewPos = viewPosVec.xyz;
+
+    // --- Culling ---
+    if (!isVisible(viewPos, p.params.x)) return;
+
+    // --- Render Prep ---
+    float dist = length(viewPos);
+    if (dist < 0.1) dist = 0.1;
+
+    // Size Attenuation
+    float baseSize = p.params.x;
+    float scale = (pointScale < 1.0) ? 400.0 : pointScale;
+    float finalSize = clamp(scale * baseSize * (1.0 / dist), 1.0, 512.0);
+
+    // Alpha Fade near camera
+    float alphaFade = smoothstep(1.0, 50.0, dist);
+    vec4 finalColor = p.color;
+    finalColor.a *= alphaFade;
+
+    if (finalColor.a < 0.001) return; // Skip invisible
+
+    // --- Output Aggregation ---
+    uvec4 ballot = subgroupBallot(true);
+    uint count = subgroupBallotBitCount(ballot);
+    uint baseIndex = 0;
+
+    if (subgroupElect()) {
+        baseIndex = atomicAdd(cmd.count, count);
+    }
+    baseIndex = subgroupBroadcastFirst(baseIndex);
+    uint localOffset = subgroupBallotExclusiveBitCount(ballot);
+    uint outIdx = baseIndex + localOffset;
+
+    visibleParticles[outIdx].position_depth = vec4(viewPos, -viewPos.z);
+    visibleParticles[outIdx].color = finalColor;
+    visibleParticles[outIdx].size = finalSize;
+}

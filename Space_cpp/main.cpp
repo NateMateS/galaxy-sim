@@ -171,14 +171,12 @@ int main() {
 
 	BlackHoleConfig blackHoleConfig = createDefaultBlackHoleConfig();
 	std::vector<BlackHole> blackHoles;
-	generateBlackHoles(blackHoles, blackHoleConfig, galaxyConfig.seed,
-		galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
+	generateBlackHoles(blackHoles, blackHoleConfig, galaxyConfig.seed, galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 	GasConfig gasConfig = createDefaultGasConfig();
 	std::vector<GasVertex> darkGasVertices;
     std::vector<GasVertex> luminousGasVertices;
-	generateGalacticGas(darkGasVertices, luminousGasVertices, gasConfig, galaxyConfig.seed,
-		galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
+	generateGalacticGas(darkGasVertices, luminousGasVertices, gasConfig, galaxyConfig.seed, galaxyConfig.diskRadius, galaxyConfig.bulgeRadius);
 
 	generateSolarSystem();
 

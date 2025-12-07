@@ -7,21 +7,161 @@
 #include <cmath>
 #include <random>
 #include <vector>
+#include <memory>
+#include <fstream>
+#include <sstream>
 #include <glm/gtc/type_ptr.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-// Static Render Resources
-static unsigned int darkVAO = 0, darkVBO = 0;
-static unsigned int luminousVAO = 0, luminousVBO = 0;
+// GPU Resources Container
+struct GasResources {
+    unsigned int inputSSBO = 0;
+    unsigned int outputSSBO = 0;
+    unsigned int indirectBuffer = 0;
+    unsigned int vao = 0; // Empty VAO, VBO is the Output SSBO
+    size_t capacity = 0;
+    size_t count = 0;
+};
+
+static GasResources darkGasRes;
+static GasResources lumGasRes;
+
+static unsigned int computeProgram = 0;
 static size_t lastDarkCount = 0;
 static size_t lastLuminousCount = 0;
+
+struct DrawCommand {
+    unsigned int count;
+    unsigned int instanceCount;
+    unsigned int first;
+    unsigned int baseInstance;
+};
 
 struct Color4 {
     float r, g, b, a;
 };
+
+// --- Shader Management ---
+static void checkCompileErrors(unsigned int shader, std::string type) {
+    int success;
+    char infoLog[1024];
+    if (type != "PROGRAM") {
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glGetShaderInfoLog(shader, 1024, NULL, infoLog);
+            std::cerr << "ERROR::SHADER_COMPILATION_ERROR of type: " << type << "\n" << infoLog << "\n -- --------------------------------------------------- -- " << std::endl;
+        }
+    } else {
+        glGetProgramiv(shader, GL_LINK_STATUS, &success);
+        if (!success) {
+            glGetProgramInfoLog(shader, 1024, NULL, infoLog);
+            std::cerr << "ERROR::PROGRAM_LINKING_ERROR of type: " << type << "\n" << infoLog << "\n -- --------------------------------------------------- -- " << std::endl;
+        }
+    }
+}
+
+static void initCompute() {
+    if (computeProgram != 0) return;
+
+    std::string code;
+    std::ifstream file("assets/shaders/gas_cull.comp");
+    if (!file.is_open()) {
+        std::cerr << "ERROR: Could not open assets/shaders/gas_cull.comp" << std::endl;
+        return;
+    }
+    std::stringstream ss;
+    ss << file.rdbuf();
+    code = ss.str();
+    const char* cCode = code.c_str();
+
+    unsigned int shader = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(shader, 1, &cCode, NULL);
+    glCompileShader(shader);
+    checkCompileErrors(shader, "COMPUTE");
+
+    computeProgram = glCreateProgram();
+    glAttachShader(computeProgram, shader);
+    glLinkProgram(computeProgram);
+    checkCompileErrors(computeProgram, "PROGRAM");
+    glDeleteShader(shader);
+}
+
+static void initGasResources(GasResources& res) {
+    if (res.vao != 0) return;
+
+    glGenBuffers(1, &res.inputSSBO);
+    glGenBuffers(1, &res.outputSSBO);
+    glGenBuffers(1, &res.indirectBuffer);
+
+    glGenVertexArrays(1, &res.vao);
+    glBindVertexArray(res.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, res.outputSSBO);
+
+    // Layout matches GasRender struct in shader:
+    // vec4 pos_depth (16), vec4 color (16), float size (4), padding (12) = 48 bytes?
+    // Wait, GasRender in shader:
+    // vec4 pos_depth; // 0
+    // vec4 color;     // 16
+    // float size;     // 32
+    // float _pad[3];  // 36 -> 48 bytes total?
+    // Shader layout std430 aligns structs.
+    // vec4 is 16-aligned.
+    // 0: vec4 (16)
+    // 16: vec4 (16)
+    // 32: float (4)
+    // 36: float (4)
+    // 40: float (4)
+    // 44: float (4)
+    // Total 48 bytes.
+    // Stride = 48.
+
+    // Attrib 0: Pos (vec3) - from pos_depth.xyz
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 48, (void*)0);
+
+    // Attrib 1: Color (vec4)
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 48, (void*)16);
+
+    // Attrib 2: Linear Depth (float) - from pos_depth.w
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 48, (void*)12); // Offset 12 is .w of first vec4
+
+    // Attrib 3: Size (float)
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, 48, (void*)32);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // Init Indirect Buffer
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, res.indirectBuffer);
+    DrawCommand cmd = {0, 1, 0, 0};
+    glBufferData(GL_DRAW_INDIRECT_BUFFER, sizeof(DrawCommand), &cmd, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+}
+
+static void uploadGasData(GasResources& res, const std::vector<GasVertex>& vertices) {
+    if (vertices.empty()) return;
+    res.count = vertices.size();
+
+    // 1. Upload Input (Static)
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, res.inputSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, vertices.size() * sizeof(GasVertex), vertices.data(), GL_STATIC_DRAW);
+
+    // 2. Allocate Output (Dynamic)
+    // 48 bytes per vertex
+    size_t outputSize = vertices.size() * 48;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, res.outputSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, outputSize, NULL, GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// --- Configuration ---
 
 GasConfig createDefaultGasConfig() {
     GasConfig config;
@@ -102,6 +242,7 @@ void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
         v.orbitalRadius = orbitalRadius;
         v.initialAngle = angle;
         v.angularVelocity = velocity;
+        v._pad0 = 0;
 
         // 2. Local Offset (Ellipsoid Shape)
         // Stretch along orbit (tangent)
@@ -109,6 +250,7 @@ void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
         v.offsetX = normalDist(rng) * size * stretch;
         v.offsetY = y + normalDist(rng) * size * 0.5f; // Flattened Y
         v.offsetZ = normalDist(rng) * size;
+        v._pad1 = 0;
 
         // 3. Visuals
         v.r = baseColor.r;
@@ -123,6 +265,7 @@ void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
         v.size = (0.5f + dist(rng)) * size * 2.0f; // Base particle size
         v.turbulencePhase = dist(rng) * 2.0f * M_PI;
         v.turbulenceSpeed = 0.5f + dist(rng) * 0.5f;
+        v._pad2 = 0;
 
         targetBuffer.push_back(v);
     }
@@ -136,12 +279,6 @@ void generateGalacticGas(std::vector<GasVertex>& darkVertices, std::vector<GasVe
 
     darkVertices.clear();
     luminousVertices.clear();
-
-    // Reserve estimated size (approx 15 particles per cloud)
-    size_t totalClouds = config.numMolecularClouds + config.numColdNeutralClouds + config.numWarmNeutralClouds +
-                         config.numWarmIonizedClouds + config.numHotIonizedClouds + config.numCoronalClouds;
-    luminousVertices.reserve(totalClouds * 15);
-    darkVertices.reserve(config.numMolecularClouds * 15);
 
     const int numArms = 2;
     const double spiralTightness = 0.3;
@@ -236,77 +373,65 @@ void generateGalacticGas(std::vector<GasVertex>& darkVertices, std::vector<GasVe
         float theta = dist(rng) * 2.0f * M_PI;
         float phi = acos(2.0f * dist(rng) - 1.0f);
         float radius = pow(dist(rng), 0.5f) * diskRadius * 2.5f;
-
         float x = radius * sin(phi) * cos(theta);
-        float z = radius * cos(phi); // Simplified mapping
+        float z = radius * cos(phi);
         float orbRadius = sqrt(x*x + z*z); // Roughly
         float y = radius * sin(phi) * sin(theta);
-
         spawnCloudParticles(luminousVertices, GasType::CORONAL, orbRadius, theta, y, 1.0f, 100.0f, 0.1f, rng, bulgeRadius);
     }
-}
-
-void uploadGasData(unsigned int& vao, unsigned int& vbo, const std::vector<GasVertex>& vertices) {
-    if (vao == 0) {
-        glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-    }
-
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(GasVertex), vertices.data(), GL_STATIC_DRAW);
-
-    // 13 Floats Total Stride
-    GLsizei stride = sizeof(GasVertex);
-
-    // 1. Orbital (vec3)
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(GasVertex, orbitalRadius));
-
-    // 2. Offset (vec3)
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(GasVertex, offsetX));
-
-    // 3. Color (vec4)
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(GasVertex, r));
-
-    // 4. Params (vec3)
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(GasVertex, size));
-
-    glBindVertexArray(0);
 }
 
 void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices,
                        float time, unsigned int depthTexture, float screenWidth, float screenHeight,
                        const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection, Shader* gasShader) {
 
-    // Check if upload is needed
-    bool darkDirty = (darkVertices.size() != lastDarkCount);
-    bool lumDirty = (luminousVertices.size() != lastLuminousCount);
+    // Init resources if needed
+    initCompute();
+    initGasResources(darkGasRes);
+    initGasResources(lumGasRes);
 
-    if (darkDirty) {
-        uploadGasData(darkVAO, darkVBO, darkVertices);
+    // Check for updates
+    if (darkVertices.size() != lastDarkCount) {
+        uploadGasData(darkGasRes, darkVertices);
         lastDarkCount = darkVertices.size();
     }
-
-    if (lumDirty) {
-        uploadGasData(luminousVAO, luminousVBO, luminousVertices);
+    if (luminousVertices.size() != lastLuminousCount) {
+        uploadGasData(lumGasRes, luminousVertices);
         lastLuminousCount = luminousVertices.size();
     }
 
+    // --- Compute Pass ---
+    glUseProgram(computeProgram);
+    glUniform1f(glGetUniformLocation(computeProgram, "pointScale"), 400.0f);
+
+    auto dispatchBatch = [](GasResources& res) {
+        if (res.count == 0) return;
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, res.inputSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, res.outputSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, res.indirectBuffer);
+
+        DrawCommand resetCmd = {0, 1, 0, 0};
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, res.indirectBuffer);
+        glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(DrawCommand), &resetCmd);
+
+        glDispatchCompute((unsigned int)((res.count + 255) / 256), 1, 1);
+    };
+
+    dispatchBatch(darkGasRes);
+    dispatchBatch(lumGasRes);
+
+    glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    // --- Render Pass ---
     gasShader->use();
     gasShader->setMat4("view", glm::value_ptr(view));
     gasShader->setMat4("projection", glm::value_ptr(projection));
     gasShader->setFloat("u_Time", time);
-    gasShader->setFloat("pointScale", 400.0f); // Tunable
 
-    // Soft Particles Uniforms
+    // Bind Depth Map for Soft Particles
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
     gasShader->setInt("depthMap", 1);
-
     gasShader->setFloat("zNear", 0.1f);
     gasShader->setFloat("zFar", 20000.0f);
     gasShader->setFloat("softnessScale", 0.05f); // 1.0 / 20.0 units
@@ -318,25 +443,24 @@ void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::ve
     glDepthMask(GL_FALSE);
     glEnable(GL_PROGRAM_POINT_SIZE);
 
-    // 1. Dark Lanes (Occlusion/Absorption)
-    // Use standard alpha blending with black color (0,0,0) to darken the background.
-    // Result = (0,0,0) * SrcAlpha + Background * (1 - SrcAlpha) = Background * (1 - SrcAlpha)
-    if (darkVertices.size() > 0) {
+    // Render Dark Lanes (Occlusion/Absorption)
+    if (darkGasRes.count > 0) {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glBindVertexArray(darkVAO);
-        glDrawArrays(GL_POINTS, 0, (GLsizei)darkVertices.size());
+        glBindVertexArray(darkGasRes.vao);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, darkGasRes.indirectBuffer);
+        glDrawArraysIndirect(GL_POINTS, 0);
     }
 
-    // 2. Luminous (Additive/Emission)
-    // Use additive blending for glowing gas layers.
-    // Result = Source * SrcAlpha + Background * 1
-    if (luminousVertices.size() > 0) {
+    // Render Luminous (Additive/Emission)
+    if (lumGasRes.count > 0) {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glBindVertexArray(luminousVAO);
-        glDrawArrays(GL_POINTS, 0, (GLsizei)luminousVertices.size());
+        glBindVertexArray(lumGasRes.vao);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, lumGasRes.indirectBuffer);
+        glDrawArraysIndirect(GL_POINTS, 0);
     }
 
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glBindVertexArray(0);
 }

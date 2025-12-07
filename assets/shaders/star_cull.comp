@@ -1,4 +1,5 @@
 #version 430 core
+#extension GL_KHR_shader_subgroup_ballot : require
 layout(local_size_x = 256) in;
 
 struct StarInput {
@@ -91,9 +92,23 @@ void main() {
     float brightness = inStar.color.w * attenuation;
     float mappedBrightness = sqrt(brightness);
 
-    // 6. Write to Output
-    // Atomic increment for append buffer
-    uint outIdx = atomicAdd(cmd.count, 1);
+    // 6. Write to Output (Subgroup Optimized)
+    uvec4 ballot = subgroupBallot(true);
+    uint count = subgroupBallotBitCount(ballot);
+    uint baseIndex = 0;
+
+    // First active thread reserves space for the whole subgroup
+    if (subgroupElect()) {
+        baseIndex = atomicAdd(cmd.count, count);
+    }
+
+    // Broadcast base index to all active threads
+    baseIndex = subgroupBroadcastFirst(baseIndex);
+
+    // Calculate local offset within the subgroup
+    uint localOffset = subgroupBallotExclusiveBitCount(ballot);
+
+    uint outIdx = baseIndex + localOffset;
 
     visibleStars[outIdx].position_doppler = vec4(pos, shift);
     visibleStars[outIdx].color_size = vec4(dopplerColor, mappedBrightness);
