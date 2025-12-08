@@ -46,6 +46,16 @@ layout(std140, binding = 0) uniform GlobalUniforms {
 };
 
 uniform float pointScale;
+uniform sampler2DMS depthMap;
+uniform float screenWidth;
+uniform float screenHeight;
+uniform float zNear;
+uniform float zFar;
+
+float LinearizeDepth(float depth) {
+    float z = depth * 2.0 - 1.0;
+    return (2.0 * zNear * zFar) / (zFar + zNear - z * (zFar - zNear));
+}
 
 bool isVisible(vec3 viewPos, float radius) {
     vec4 clipPos = projection * vec4(viewPos, 1.0);
@@ -89,24 +99,60 @@ void main() {
     vec4 viewPosVec = view * vec4(worldPos, 1.0);
     vec3 viewPos = viewPosVec.xyz;
 
-    // --- Culling ---
+    // --- Frustum Culling ---
     if (!isVisible(viewPos, p.params.x)) return;
 
     // --- Render Prep ---
     float dist = length(viewPos);
     if (dist < 0.1) dist = 0.1;
 
-    // Size Attenuation
+    // --- Stochastic LOD ---
     float baseSize = p.params.x;
-    float scale = (pointScale < 1.0) ? 400.0 : pointScale;
-    float finalSize = clamp(scale * baseSize * (1.0 / dist), 1.0, 512.0);
+    float scale = (pointScale < 1.0) ? 200.0 : pointScale;
+    float projectedSize = scale * baseSize * (1.0 / dist);
+
+    // Calculate survival probability based on screen area
+    // Smaller particles are less likely to survive, but get brighter
+    float area = projectedSize * projectedSize;
+    // This aggressively reduces the number of small distant particles processed.
+    float keepProbability = clamp(area / 64.0, 0.0, 1.0);
+
+    // Pseudo-random hash for stable stochastic culling
+    uint hash = idx * 747796405u + 2891336453u;
+    hash = ((hash >> 16) ^ hash) * 277803737u;
+    float randVal = float(hash) / 4294967295.0;
+
+    if (randVal > keepProbability) return;
+
+    // --- Occlusion Culling ---
+    vec4 clipPos = projection * vec4(viewPos, 1.0);
+    vec3 ndc = clipPos.xyz / clipPos.w;
+    vec2 screenUV = ndc.xy * 0.5 + 0.5;
+    ivec2 screenCoords = ivec2(screenUV * vec2(screenWidth, screenHeight));
+
+    if (screenCoords.x >= 0 && screenCoords.x < int(screenWidth) &&
+        screenCoords.y >= 0 && screenCoords.y < int(screenHeight)) {
+
+        float depthNonLinear = texelFetch(depthMap, screenCoords, 0).r;
+        float depthLinear = LinearizeDepth(depthNonLinear);
+        float particleDist = -viewPos.z;
+
+        // Cull if particle is significantly behind geometry (allow 20.0 units margin)
+        if (particleDist > depthLinear + 20.0) return;
+    }
+
+    // --- Render Prep ---
+    float finalSize = clamp(projectedSize, 1.0, 128.0);
 
     // Alpha Fade near camera
     float alphaFade = smoothstep(1.0, 50.0, dist);
     vec4 finalColor = p.color;
-    finalColor.a *= alphaFade;
 
-    if (finalColor.a < 0.001) return; // Skip invisible
+    // Apply stochastic compensation and camera fade
+    // Note: max(keepProbability, 0.001) prevents division by zero
+    finalColor.a *= alphaFade * (1.0 / max(keepProbability, 0.001));
+
+    if (finalColor.a < 0.001) return;
 
     // --- Output Aggregation ---
     uvec4 ballot = subgroupBallot(true);

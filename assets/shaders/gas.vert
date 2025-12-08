@@ -16,6 +16,8 @@ layout (std140) uniform GlobalUniforms {
     float time;
 };
 
+uniform float pointMultiplier;
+
 void main()
 {
     // The position is already in View Space (from Compute Shader)
@@ -27,5 +29,5 @@ void main()
 
     // Point Size
     // This is the size ready for rasterization.
-    gl_PointSize = aSize;
+    gl_PointSize = aSize * pointMultiplier;
 }

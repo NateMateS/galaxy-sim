@@ -12,6 +12,8 @@ struct BloomMip {
 
 class PostProcessor {
 public:
+    static constexpr float LOW_RES_SCALE = 0.25f;
+
     unsigned int Width, Height;
 
     // Framebuffers
@@ -24,6 +26,14 @@ public:
     unsigned int MSAADepthCopyTexture;
     unsigned int MSAADummyColorTexture; // Required to make FBO Complete on some drivers
 
+    // Low-Resolution Gas Rendering (Quarter Resolution)
+    // Separated FBOs to avoid feedback loops
+    unsigned int LowResGasFBO;   // For drawing gas (Color Att 0: LowResGasTexture)
+    unsigned int LowResDepthFBO; // For downsampling depth (Color Att 0: LowResDepthTexture)
+
+    unsigned int LowResGasTexture; // RGB16F
+    unsigned int LowResDepthTexture; // R32F (Linear Depth)
+
     unsigned int IntermediateFBO; // Intermediate FBO for resolving MSAA
     unsigned int ScreenTexture; // Texture attachment for Intermediate FBO
     unsigned int DepthTexture; // Resolved Depth Texture
@@ -35,6 +45,8 @@ public:
     std::unique_ptr<Shader> postShader;
     std::unique_ptr<Shader> downsampleShader;
     std::unique_ptr<Shader> upsampleShader;
+    std::unique_ptr<Shader> gasCompositeShader;
+    std::unique_ptr<Shader> depthDownsampleShader;
 
     unsigned int QuadVAO = 0;
     unsigned int QuadVBO;
@@ -48,6 +60,12 @@ public:
 
     void BeginRender();
     void EndRender();
+
+    // Quarter-Resolution Gas Pass
+    void PrepareGasPass(); // Downsamples depth
+    void BeginGasPass();
+    void EndGasPass();
+
     void Resize(unsigned int width, unsigned int height);
 
     // Copies the multisampled depth buffer to a second texture to allow reading while writing

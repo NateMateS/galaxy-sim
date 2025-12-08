@@ -59,8 +59,12 @@ GasConfig createDefaultGasConfig();
 // Note: This now generates static vertices instead of dynamic objects
 void generateGalacticGas(std::vector<GasVertex>& darkVertices, std::vector<GasVertex>& luminousVertices, const GasConfig& config, unsigned int seed, double diskRadius, double bulgeRadius);
 
-// Render needs time for simulation and depth map for soft particles
-void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices, float time, unsigned int depthTexture, float screenWidth, float screenHeight, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection, class Shader* gasShader);
+// Prepare resources and run compute shader for culling
+void prepareGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices, float time, unsigned int depthTexture, float screenWidth, float screenHeight, const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection);
+
+// Draw the particles (split into passes)
+void drawDarkGas(class Shader* gasShader, const glm::mat4& view, const glm::mat4& projection, float time, unsigned int depthTexture);
+void drawLuminousGas(class Shader* gasShader, const glm::mat4& view, const glm::mat4& projection, float time, unsigned int depthTexture, bool quarterRes);
 
 const float MOLECULAR_TEMP = 20.0f;          // 10-50 K
 const float COLD_NEUTRAL_TEMP = 80.0f;       // 50-100 K

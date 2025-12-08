@@ -10,6 +10,8 @@ PostProcessor::PostProcessor(unsigned int width, unsigned int height)
     postShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/post.frag");
     downsampleShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/downsample.frag");
     upsampleShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/upsample.frag");
+    gasCompositeShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/bilateral_composite.frag");
+    depthDownsampleShader = std::make_unique<Shader>("assets/shaders/post.vert", "assets/shaders/depth_downsample.frag");
 
     postShader->use();
     postShader->setInt("scene", 0);
@@ -20,6 +22,14 @@ PostProcessor::PostProcessor(unsigned int width, unsigned int height)
 
     upsampleShader->use();
     upsampleShader->setInt("srcTexture", 0);
+
+    gasCompositeShader->use();
+    gasCompositeShader->setInt("gasTexture", 0);
+    gasCompositeShader->setInt("quarterResLinearDepth", 1);
+    gasCompositeShader->setInt("highResDepth", 2);
+
+    depthDownsampleShader->use();
+    depthDownsampleShader->setInt("depthMap", 0);
 
     std::cout << "PostProcessor: InitFramebuffers..." << std::endl;
     InitFramebuffers();
@@ -37,6 +47,11 @@ PostProcessor::~PostProcessor() {
     glDeleteTextures(1, &MSAADepthCopyTexture);
     glDeleteTextures(1, &MSAADummyColorTexture);
 
+    glDeleteFramebuffers(1, &LowResGasFBO);
+    glDeleteFramebuffers(1, &LowResDepthFBO);
+    glDeleteTextures(1, &LowResGasTexture);
+    glDeleteTextures(1, &LowResDepthTexture);
+
     glDeleteFramebuffers(1, &IntermediateFBO);
     glDeleteTextures(1, &ScreenTexture);
     glDeleteTextures(1, &DepthTexture);
@@ -51,7 +66,7 @@ PostProcessor::~PostProcessor() {
 }
 
 void PostProcessor::InitFramebuffers() {
-    std::cout << "PostProcessor: Generatng MSAA FBO..." << std::endl;
+    std::cout << "PostProcessor: Generating MSAA FBO..." << std::endl;
     // 1. Multisampled FBO
     glGenFramebuffers(1, &MSAAFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, MSAAFBO);
@@ -71,7 +86,7 @@ void PostProcessor::InitFramebuffers() {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cout << "ERROR::POSTPROCESSOR: MSAA Framebuffer not complete!" << std::endl;
 
-    std::cout << "PostProcessor: Generatng Depth Copy FBO..." << std::endl;
+    std::cout << "PostProcessor: Generating Depth Copy FBO..." << std::endl;
     // 1b. Depth Copy FBO (MSAA) to break feedback loop
     glGenFramebuffers(1, &DepthCopyFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, DepthCopyFBO);
@@ -92,7 +107,47 @@ void PostProcessor::InitFramebuffers() {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cout << "ERROR::POSTPROCESSOR: Depth Copy Framebuffer not complete!" << std::endl;
 
-    std::cout << "PostProcessor: Generatng Intermediate FBO..." << std::endl;
+    // 1c. Low-Resolution Gas Rendering (Quarter Resolution)
+    // FBO 1: Gas Accumulation (Color Only)
+    std::cout << "PostProcessor: Generating Low-Res Gas FBO..." << std::endl;
+    glGenFramebuffers(1, &LowResGasFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, LowResGasFBO);
+
+    glGenTextures(1, &LowResGasTexture);
+    glBindTexture(GL_TEXTURE_2D, LowResGasTexture);
+    // Optimization: Use R11G11B10F to reduce memory bandwidth by 50% (32 bits vs 64 bits)
+    // We are accumulating additive light, so we don't need the alpha channel in the buffer.
+    // Optimization 2: Use Quarter-Resolution (Width/4) to massively reduce fill-rate cost.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R11F_G11F_B10F, (unsigned int)(Width * LOW_RES_SCALE), (unsigned int)(Height * LOW_RES_SCALE), 0, GL_RGB, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, LowResGasTexture, 0);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "ERROR::POSTPROCESSOR: Low-Res Gas FBO not complete!" << std::endl;
+
+    // FBO 2: Depth Downsampling (R32F, Linear Depth Only)
+    std::cout << "PostProcessor: Generating Low-Res Depth FBO..." << std::endl;
+    glGenFramebuffers(1, &LowResDepthFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, LowResDepthFBO);
+
+    glGenTextures(1, &LowResDepthTexture);
+    glBindTexture(GL_TEXTURE_2D, LowResDepthTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, (unsigned int)(Width * LOW_RES_SCALE), (unsigned int)(Height * LOW_RES_SCALE), 0, GL_RED, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Attach to COLOR_ATTACHMENT0 (not 1)
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, LowResDepthTexture, 0);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "ERROR::POSTPROCESSOR: Low-Res Depth FBO not complete!" << std::endl;
+
+    std::cout << "PostProcessor: Generating Intermediate FBO..." << std::endl;
     // 2. Intermediate FBO (for resolving MSAA and HDR bloom extraction)
     glGenFramebuffers(1, &IntermediateFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, IntermediateFBO);
@@ -253,6 +308,71 @@ void PostProcessor::EndRender() {
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+void PostProcessor::PrepareGasPass() {
+    // Bind the separate Depth FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, LowResDepthFBO);
+    glViewport(0, 0, (unsigned int)(Width * LOW_RES_SCALE), (unsigned int)(Height * LOW_RES_SCALE));
+
+    // Target: LowResDepthTexture is at Attachment 0
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    depthDownsampleShader->use();
+    depthDownsampleShader->setFloat("zNear", 0.1f);
+    depthDownsampleShader->setFloat("zFar", 20000.0f);
+    depthDownsampleShader->setFloat("downsampleScale", 1.0f / LOW_RES_SCALE);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, MSAADepthCopyTexture);
+
+    // Full screen quad to downsample
+    glBindVertexArray(QuadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+void PostProcessor::BeginGasPass() {
+    // Bind the separate Gas FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, LowResGasFBO);
+    glViewport(0, 0, (unsigned int)(Width * LOW_RES_SCALE), (unsigned int)(Height * LOW_RES_SCALE));
+
+    // Target: Gas Color Texture (Attachment 0)
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    // Clear color (accumulate additive light)
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void PostProcessor::EndGasPass() {
+    // Composite Gas back to Main FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, MSAAFBO);
+    glViewport(0, 0, Width, Height);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE); // Pure additive blending
+    glDisable(GL_DEPTH_TEST);
+
+    gasCompositeShader->use();
+    gasCompositeShader->setFloat("zNear", 0.1f);
+    gasCompositeShader->setFloat("zFar", 20000.0f);
+    gasCompositeShader->setFloat("depthSensitivity", 0.1f);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, LowResGasTexture);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, LowResDepthTexture);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, MSAADepthCopyTexture);
+
+    glBindVertexArray(QuadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Restore state
+    glEnable(GL_DEPTH_TEST);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
 void PostProcessor::Resize(unsigned int width, unsigned int height) {
     Width = width;
     Height = height;
@@ -265,6 +385,11 @@ void PostProcessor::Resize(unsigned int width, unsigned int height) {
     glDeleteFramebuffers(1, &DepthCopyFBO);
     glDeleteTextures(1, &MSAADepthCopyTexture);
     glDeleteTextures(1, &MSAADummyColorTexture);
+
+    glDeleteFramebuffers(1, &LowResGasFBO);
+    glDeleteFramebuffers(1, &LowResDepthFBO);
+    glDeleteTextures(1, &LowResGasTexture);
+    glDeleteTextures(1, &LowResDepthTexture);
 
     glDeleteFramebuffers(1, &IntermediateFBO);
     glDeleteTextures(1, &ScreenTexture);

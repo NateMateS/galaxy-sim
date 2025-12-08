@@ -28,6 +28,7 @@ std::unique_ptr<Shader> planetShader;
 std::unique_ptr<Shader> sunShader;
 std::unique_ptr<Shader> blackHoleShader;
 std::unique_ptr<Shader> gasShader;
+std::unique_ptr<Shader> gasLowResShader;
 std::unique_ptr<Shader> orbitShader;
 
 unsigned int sunTexture = 0;
@@ -97,13 +98,26 @@ void render(const std::vector<StarInput>& stars, const std::vector<BlackHole>& b
     // Copy Depth to break Feedback Loop (Read Copy, Write Original)
     postProcessor->CopyDepth();
 
+    // 2. Prepare & Cull Gas Particles (Compute Shader)
+    prepareGalacticGas(darkGas, luminousGas, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture, (float)WIDTH, (float)HEIGHT, zone, view, projection);
+
+    // 3. Render Dark Gas (Full Res, Occlusion)
+    // Must be done before stars so they are occluded properly
+    drawDarkGas(gasShader.get(), view, projection, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture);
+
     // Transparent / Additive
     // Stars (Additive)
 	renderStars(zone, view, projection, glm::vec3(camera.posX, camera.posY, camera.posZ), (float)glfwGetTime());
 
-    // Gas (Blend with Soft Particles)
-    // We use the MSAA depth COPY directly via sampler2DMS
-    renderGalacticGas(darkGas, luminousGas, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture, (float)WIDTH, (float)HEIGHT, zone, view, projection, gasShader.get());
+    // 4. Luminous Gas Pass (Quarter Res)
+    postProcessor->PrepareGasPass(); // Downsample Depth to R32F
+    postProcessor->BeginGasPass(); // Switch to Quarter-Res FBO
+
+    // Draw using the optimized Low-Res Shader
+    // Texture binding and uniform setup is now handled inside drawLuminousGas
+    drawLuminousGas(gasLowResShader.get(), view, projection, (float)glfwGetTime(), postProcessor->LowResDepthTexture, true);
+
+    postProcessor->EndGasPass(); // Composites back to Main FBO
 
     // Black Holes (Blend)
 	renderBlackHoles(blackHoles, zone, camera, view, projection, noiseTexture, blackHoleShader.get());
@@ -134,6 +148,7 @@ int main() {
         sunShader = std::make_unique<Shader>("assets/shaders/sun.vert", "assets/shaders/sun.frag");
         blackHoleShader = std::make_unique<Shader>("assets/shaders/blackhole.vert", "assets/shaders/blackhole.frag");
         gasShader = std::make_unique<Shader>("assets/shaders/gas.vert", "assets/shaders/gas.frag");
+        gasLowResShader = std::make_unique<Shader>("assets/shaders/gas.vert", "assets/shaders/gas_lowres.frag");
         orbitShader = std::make_unique<Shader>("assets/shaders/orbit.vert", "assets/shaders/orbit.frag");
 
         // Initialize UBO
@@ -144,6 +159,7 @@ int main() {
         sunShader->setUniformBlock("GlobalUniforms", 0);
         blackHoleShader->setUniformBlock("GlobalUniforms", 0);
         gasShader->setUniformBlock("GlobalUniforms", 0);
+        gasLowResShader->setUniformBlock("GlobalUniforms", 0);
         orbitShader->setUniformBlock("GlobalUniforms", 0);
 
         // Uniforms setup

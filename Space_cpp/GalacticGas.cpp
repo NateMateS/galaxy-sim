@@ -381,10 +381,9 @@ void generateGalacticGas(std::vector<GasVertex>& darkVertices, std::vector<GasVe
     }
 }
 
-void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices,
-                       float time, unsigned int depthTexture, float screenWidth, float screenHeight,
-                       const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection, Shader* gasShader) {
-
+void prepareGalacticGas(const std::vector<GasVertex>& darkVertices, const std::vector<GasVertex>& luminousVertices,
+                        float time, unsigned int depthTexture, float screenWidth, float screenHeight,
+                        const RenderZone& zone, const glm::mat4& view, const glm::mat4& projection) {
     // Init resources if needed
     initCompute();
     initGasResources(darkGasRes);
@@ -402,7 +401,18 @@ void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::ve
 
     // --- Compute Pass ---
     glUseProgram(computeProgram);
-    glUniform1f(glGetUniformLocation(computeProgram, "pointScale"), 400.0f);
+    glUniform1f(glGetUniformLocation(computeProgram, "pointScale"), 200.0f);
+
+    // Bind Depth Map for Occlusion Culling
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
+    glUniform1i(glGetUniformLocation(computeProgram, "depthMap"), 0);
+
+    // Uniforms for Coordinate Conversion & Stochastic LOD
+    glUniform1f(glGetUniformLocation(computeProgram, "screenWidth"), screenWidth);
+    glUniform1f(glGetUniformLocation(computeProgram, "screenHeight"), screenHeight);
+    glUniform1f(glGetUniformLocation(computeProgram, "zNear"), 0.1f);
+    glUniform1f(glGetUniformLocation(computeProgram, "zFar"), 20000.0f);
 
     auto dispatchBatch = [](GasResources& res) {
         if (res.count == 0) return;
@@ -421,12 +431,16 @@ void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::ve
     dispatchBatch(lumGasRes);
 
     glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+}
+
+void drawDarkGas(Shader* gasShader, const glm::mat4& view, const glm::mat4& projection, float time, unsigned int depthTexture) {
+    if (darkGasRes.count == 0) return;
 
     // --- Render Pass ---
     gasShader->use();
-    gasShader->setMat4("view", glm::value_ptr(view));
-    gasShader->setMat4("projection", glm::value_ptr(projection));
     gasShader->setFloat("u_Time", time);
+    gasShader->setFloat("resolutionScale", 1.0f); // Always full res for dark gas
+    gasShader->setFloat("pointMultiplier", 1.0f); // Full resolution size
 
     // Bind Depth Map for Soft Particles
     glActiveTexture(GL_TEXTURE1);
@@ -444,20 +458,67 @@ void renderGalacticGas(const std::vector<GasVertex>& darkVertices, const std::ve
     glEnable(GL_PROGRAM_POINT_SIZE);
 
     // Render Dark Lanes (Occlusion/Absorption)
-    if (darkGasRes.count > 0) {
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glBindVertexArray(darkGasRes.vao);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, darkGasRes.indirectBuffer);
-        glDrawArraysIndirect(GL_POINTS, 0);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(darkGasRes.vao);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, darkGasRes.indirectBuffer);
+    glDrawArraysIndirect(GL_POINTS, 0);
+
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+void drawLuminousGas(Shader* gasShader, const glm::mat4& view, const glm::mat4& projection, float time, unsigned int depthTexture, bool quarterRes) {
+    if (lumGasRes.count == 0) return;
+
+    gasShader->use();
+    gasShader->setFloat("u_Time", time);
+
+    // If quarterRes is true, we need to scale gl_FragCoord in the shader to sample the full-res depth map correctly
+    // Low-Res path uses Quarter-Res (4.0 scale)
+    if (!quarterRes) {
+        gasShader->setFloat("resolutionScale", 1.0f);
+    }
+    // Scale points down by 0.25 if rendering to quarter-res buffer to preserve screen coverage ratio and reduce fill rate
+    gasShader->setFloat("pointMultiplier", quarterRes ? 0.25f : 1.0f);
+
+    // Bind Depth Map for Soft Particles
+    if (!quarterRes) {
+        // Full Res: Use Hardware Depth Test + Manual Softness Read
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
+        gasShader->setInt("depthMap", 1);
+
+        glEnable(GL_DEPTH_TEST);
+    } else {
+        // Quarter Res: Disable Hardware Depth Test
+        // We are rendering to an offscreen buffer with NO depth attachment.
+        // Depth testing is done manually in the pixel shader against the downsampled depth texture.
+        glDisable(GL_DEPTH_TEST);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, depthTexture);
+        gasShader->setInt("quarterResLinearDepth", 0);
     }
 
-    // Render Luminous (Additive/Emission)
-    if (lumGasRes.count > 0) {
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glBindVertexArray(lumGasRes.vao);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, lumGasRes.indirectBuffer);
-        glDrawArraysIndirect(GL_POINTS, 0);
+    if (!quarterRes) {
+        gasShader->setFloat("zNear", 0.1f);
+        gasShader->setFloat("zFar", 20000.0f);
     }
+    gasShader->setFloat("softnessScale", 0.05f);
+
+    glEnable(GL_BLEND);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+
+    // Render Luminous (Additive/Emission)
+    // For Quarter-Res R11G11B10F, we accumulate light: SrcRGB * SrcAlpha + DstRGB
+    // This works perfectly as the buffer has no alpha to mess up.
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glBindVertexArray(lumGasRes.vao);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, lumGasRes.indirectBuffer);
+    glDrawArraysIndirect(GL_POINTS, 0);
 
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
