@@ -4,19 +4,12 @@
 
 struct RenderZone;
 
-// Optimized Star Input for Compute Shader (Aligned to vec4)
+// Packed Star Input (16 bytes)
 struct StarInput {
-    // x: radius, y: initialAngle, z: y_pos, w: angularVelocity
-    float radius;
-    float angle;
-    float y;
-    float velocity;
-
-    // x: r, y: g, z: b, w: brightness
-    float r;
-    float g;
-    float b;
-    float brightness;
+    float radius;            // 4 bytes
+    uint32_t packedOrbital;  // 4 bytes (angle, velocity) - Half2x16
+    uint32_t packedYBright;  // 4 bytes (y, brightness) - Half2x16
+    uint32_t color;          // 4 bytes (rgba8)
 };
 
 // Layout: radius, angle, y, velocity, r, g, b, brightness

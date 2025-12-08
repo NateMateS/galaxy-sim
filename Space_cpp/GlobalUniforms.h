@@ -4,11 +4,9 @@
 #include <glm/gtc/type_ptr.hpp>
 
 struct GlobalUniformsData {
-    glm::mat4 view;         // 64 bytes (Offset 0)
-    glm::mat4 projection;   // 64 bytes (Offset 64)
-    glm::vec4 viewPos;      // 16 bytes (Offset 128) - w unused
-    float time;             // 4 bytes  (Offset 144)
-    float _pad[3];          // 12 bytes (Offset 148) -> Total 160 bytes
+    glm::mat4 view;         // 64 bytes
+    glm::mat4 projection;   // 64 bytes
+    glm::vec4 viewPosTime;  // 16 bytes (xyz=pos, w=time)
 };
 
 class GlobalUniformBuffer {
@@ -39,8 +37,7 @@ public:
         GlobalUniformsData data;
         data.view = view;
         data.projection = projection;
-        data.viewPos = glm::vec4(camPos, 1.0f);
-        data.time = time;
+        data.viewPosTime = glm::vec4(camPos, time);
 
         glBindBuffer(GL_UNIFORM_BUFFER, UBO);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(GlobalUniformsData), &data);

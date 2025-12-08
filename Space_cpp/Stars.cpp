@@ -10,6 +10,7 @@
 #include <random>
 #include <memory>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/packing.hpp>
 #include <fstream>
 #include <sstream>
 
@@ -121,13 +122,19 @@ void initStars() {
     // Bind Output Buffer as VBO for the VAO
     glBindBuffer(GL_ARRAY_BUFFER, outputSSBO);
 
+    const int STRIDE = 24;
+
     // Attrib 0: Pos + Doppler (vec4)
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 32, (void*)0); // 8 floats stride
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
 
-    // Attrib 1: Color + Size (vec4)
+    // Attrib 1: Color (vec4 unpacked from uint)
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 32, (void*)16);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)16);
+
+    // Attrib 2: Size (float)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)20);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -158,9 +165,9 @@ void uploadStarData(const std::vector<StarInput>& stars) {
     glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * sizeof(StarInput), stars.data(), GL_STATIC_DRAW);
 
     // 2. Allocate Output Buffer (Dynamic - GPU write)
-    // Structure: vec4 pos_doppler, vec4 color_size (32 bytes per star)
+    // Structure: 24 bytes per star (StarRender)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, outputSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * 32, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * 24, NULL, GL_DYNAMIC_DRAW);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
@@ -199,8 +206,6 @@ void renderStars(const RenderZone& zone, const glm::mat4& view, const glm::mat4&
 
     // --- 2. RENDER PASS ---
     starRenderShader->use();
-    starRenderShader->setMat4("view", glm::value_ptr(view));
-    starRenderShader->setMat4("projection", glm::value_ptr(projection));
     starRenderShader->setFloat("screenHeight", (float)HEIGHT);
 
     glActiveTexture(GL_TEXTURE0);
@@ -223,7 +228,16 @@ void renderStars(const RenderZone& zone, const glm::mat4& view, const glm::mat4&
 }
 
 
-// --- Generation Logic Adapted for StarInput ---
+// Helper
+static uint32_t packColorStar(float r, float g, float b, float a) {
+    uint8_t ur = (uint8_t)(glm::clamp(r, 0.0f, 1.0f) * 255.0f);
+    uint8_t ug = (uint8_t)(glm::clamp(g, 0.0f, 1.0f) * 255.0f);
+    uint8_t ub = (uint8_t)(glm::clamp(b, 0.0f, 1.0f) * 255.0f);
+    uint8_t ua = (uint8_t)(glm::clamp(a, 0.0f, 1.0f) * 255.0f);
+    return (ua << 24) | (ub << 16) | (ug << 8) | ur;
+}
+
+// --- Generation Logic Adapted for Packed StarInput ---
 void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config) {
     std::mt19937 rng(config.seed);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -234,22 +248,23 @@ void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config
 
     for (int i = 0; i < config.numStars; i++) {
         StarInput star;
-        float x, z; // Temp for calc
+        float radius, angle, y, velocity;
+        float r, g, b, brightness;
 
         bool inBulge = dist(rng) < 0.15f;
 
         if (inBulge) {
             float theta = dist(rng) * 2.0f * M_PI;
             float phi = acos(2.0f * dist(rng) - 1.0f);
-            float radius = pow(dist(rng), 1.0f / 3.0f) * config.bulgeRadius;
+            float rawRadius = pow(dist(rng), 1.0f / 3.0f) * config.bulgeRadius;
 
-            x = radius * sin(phi) * cos(theta);
-            star.y = radius * sin(phi) * sin(theta);
-            z = radius * cos(phi);
+            float x = rawRadius * sin(phi) * cos(theta);
+            y = rawRadius * sin(phi) * sin(theta);
+            float z = rawRadius * cos(phi);
 
-            star.radius = sqrt(x * x + z * z);
-            star.angle = atan2(z, x);
-            star.velocity = config.rotationSpeed * 0.5f / (config.bulgeRadius + 1.0f);
+            radius = sqrt(x * x + z * z);
+            angle = atan2(z, x);
+            velocity = config.rotationSpeed * 0.5f / (config.bulgeRadius + 1.0f);
         }
         else {
             auto sampleExponentialDiskRadius = [&](float diskScale) -> float {
@@ -270,30 +285,30 @@ void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config
             };
 
             float diskScale = static_cast<float>(config.diskRadius) * 0.25f;
-            float radius = sampleExponentialDiskRadius(diskScale);
+            float rSample = sampleExponentialDiskRadius(diskScale);
             float maxRadius = static_cast<float>(config.diskRadius) * 2.0f;
-            if (radius > maxRadius) radius = maxRadius;
+            if (rSample > maxRadius) rSample = maxRadius;
 
             float theta = dist(rng) * 2.0f * M_PI;
             float minArmDistance = 1e10f;
 
             for (int arm = 0; arm < config.numSpiralArms; arm++) {
                 float armOffset = (arm * 2.0f * M_PI) / config.numSpiralArms;
-                float spiralTheta = log(radius / config.bulgeRadius) / config.spiralTightness + armOffset;
+                float spiralTheta = log(rSample / config.bulgeRadius) / config.spiralTightness + armOffset;
                 float angleDiff = theta - spiralTheta;
                 while (angleDiff > M_PI) angleDiff -= 2.0f * M_PI;
                 while (angleDiff < -M_PI) angleDiff += 2.0f * M_PI;
-                minArmDistance = fmin(minArmDistance, fabs(angleDiff * radius));
+                minArmDistance = fmin(minArmDistance, fabs(angleDiff * rSample));
             }
 
-            float radiusNorm = radius / static_cast<float>(config.diskRadius);
+            float radiusNorm = rSample / static_cast<float>(config.diskRadius);
             float edgeFactor = (radiusNorm > 1.0f) ? 1.0f : radiusNorm;
             float effectiveArmWidth = config.armWidth * (1.0f + edgeFactor * 1.5f);
             float armProximity = exp(-minArmDistance * minArmDistance / (effectiveArmWidth * effectiveArmWidth));
 
             float acceptProbability;
-            if (radius > config.diskRadius) {
-                 float excessRadius = radius - config.diskRadius;
+            if (rSample > config.diskRadius) {
+                 float excessRadius = rSample - config.diskRadius;
                  float fadeScale = config.diskRadius * 0.15f;
                  float outlierFactor = exp(-excessRadius / fadeScale);
                  if (radiusNorm > 1.3f) outlierFactor *= (1.3f/radiusNorm)*(1.3f/radiusNorm);
@@ -302,8 +317,8 @@ void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config
                 float densityWeight = armProximity * config.armDensityBoost;
                 acceptProbability = (1.0f + densityWeight) / (1.0f + config.armDensityBoost);
                 if (armProximity < 0.3f) acceptProbability *= 0.2f;
-                if (radius > config.diskRadius * 0.85f) {
-                     float t = (config.diskRadius - radius) / (config.diskRadius * 0.15f);
+                if (rSample > config.diskRadius * 0.85f) {
+                     float t = (config.diskRadius - rSample) / (config.diskRadius * 0.15f);
                      acceptProbability *= (0.5f + 0.5f * t);
                 }
             }
@@ -315,12 +330,12 @@ void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config
             float noiseScale = 15.0f * (1.0f + radiusNorm * 0.8f);
             float noise = normalDist(rng) * noiseScale;
             float radialScatter = normalDist(rng) * 20.0f * radiusNorm * radiusNorm;
-            float effectiveRadius = radius + noise * 0.3f + radialScatter;
+            float effectiveRadius = rSample + noise * 0.3f + radialScatter;
 
-            star.angle = theta;
-            star.radius = effectiveRadius;
-            star.y = normalDist(rng) * config.diskHeight * (1.0f - edgeFactor * 0.5f);
-            star.velocity = config.rotationSpeed * 1.0f / (sqrt(radius / config.bulgeRadius) * (radius + 1.0f));
+            angle = theta;
+            radius = effectiveRadius;
+            y = normalDist(rng) * config.diskHeight * (1.0f - edgeFactor * 0.5f);
+            velocity = config.rotationSpeed * 1.0f / (sqrt(rSample / config.bulgeRadius) * (rSample + 1.0f));
         }
 
         float typeRoll = dist(rng);
@@ -331,29 +346,37 @@ void generateStarField(std::vector<StarInput>& stars, const GalaxyConfig& config
             if (typeRoll <= cumulative) { selectedType = t; break; }
         }
 
-        star.r = starTypes[selectedType].r;
-        star.g = starTypes[selectedType].g;
-        star.b = starTypes[selectedType].b;
+        r = starTypes[selectedType].r;
+        g = starTypes[selectedType].g;
+        b = starTypes[selectedType].b;
 
-        float distFromCenter = sqrt(star.radius * star.radius + star.y * star.y); // Approx
+        float distFromCenter = sqrt(radius * radius + y * y); // Approx
         if (distFromCenter < config.bulgeRadius) {
-            star.brightness = 0.4f + dist(rng) * 0.4f;
+            brightness = 0.4f + dist(rng) * 0.4f;
         } else {
-            star.brightness = 0.3f + dist(rng) * 0.7f;
+            brightness = 0.3f + dist(rng) * 0.7f;
             // Recalc arm brightness for final pos
             float minArmDist = 1e10f;
              for (int arm = 0; arm < config.numSpiralArms; arm++) {
                 float armOffset = (arm * 2.0f * M_PI) / config.numSpiralArms;
-                float spiralTheta = log(star.radius / config.bulgeRadius) / config.spiralTightness + armOffset;
-                float angleDiff = star.angle - spiralTheta;
+                float spiralTheta = log(radius / config.bulgeRadius) / config.spiralTightness + armOffset;
+                float angleDiff = angle - spiralTheta;
                 while (angleDiff > M_PI) angleDiff -= 2.0f * M_PI;
                 while (angleDiff < -M_PI) angleDiff += 2.0f * M_PI;
-                minArmDist = fmin(minArmDist, fabs(angleDiff * star.radius));
+                minArmDist = fmin(minArmDist, fabs(angleDiff * radius));
             }
             float armBrightness = exp(-minArmDist * minArmDist / (config.armWidth * config.armWidth * 4.0f));
-            star.brightness += armBrightness * 0.3f;
-            if (star.brightness > 1.0f) star.brightness = 1.0f;
+            brightness += armBrightness * 0.3f;
+            if (brightness > 1.0f) brightness = 1.0f;
         }
+
+        // --- PACKING ---
+        star.radius = radius;
+        // SCALE velocity by 1000 to avoid subnormal FP16 precision loss
+        star.packedOrbital = glm::packHalf2x16(glm::vec2(angle, velocity * 1000.0f));
+        star.packedYBright = glm::packHalf2x16(glm::vec2(y, brightness));
+        // Use 1.0 as alpha for now, could store something else
+        star.color = packColorStar(r, g, b, 1.0f);
 
         stars.push_back(star);
     }

@@ -10,12 +10,12 @@ uniform sampler2D sunTexture;
 layout (std140) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 void main()
 {
+    float time = viewPosTime.w;
     // 1. Animated Surface
     // Distort UVs with time
     float speed = 0.05;
@@ -32,7 +32,7 @@ void main()
     surfaceColor *= 2.5;
 
     // 2. Fresnel Glow (Corona)
-    vec3 viewDir = normalize(viewPos.xyz - FragPos);
+    vec3 viewDir = normalize(viewPosTime.xyz - FragPos);
     vec3 norm = normalize(Normal);
     float fresnel = 1.0 - max(dot(viewDir, norm), 0.0);
     fresnel = pow(fresnel, 2.0);

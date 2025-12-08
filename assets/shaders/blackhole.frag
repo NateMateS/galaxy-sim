@@ -12,12 +12,12 @@ uniform float outerRadius;
 layout (std140) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 void main()
 {
+    float time = viewPosTime.w;
     // Center UVs to (-1, 1)
     vec2 uv = TexCoords * 2.0 - 1.0;
     float dist = length(uv);

@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/packing.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -100,39 +101,32 @@ static void initGasResources(GasResources& res) {
     glBindVertexArray(res.vao);
     glBindBuffer(GL_ARRAY_BUFFER, res.outputSSBO);
 
-    // Layout matches GasRender struct in shader:
-    // vec4 pos_depth (16), vec4 color (16), float size (4), padding (12) = 48 bytes?
-    // Wait, GasRender in shader:
-    // vec4 pos_depth; // 0
-    // vec4 color;     // 16
-    // float size;     // 32
-    // float _pad[3];  // 36 -> 48 bytes total?
-    // Shader layout std430 aligns structs.
-    // vec4 is 16-aligned.
-    // 0: vec4 (16)
-    // 16: vec4 (16)
-    // 32: float (4)
-    // 36: float (4)
-    // 40: float (4)
-    // 44: float (4)
-    // Total 48 bytes.
-    // Stride = 48.
+    // Layout matches Packed GasRender struct in shader (32 bytes total)
+    // struct GasRender {
+    //     vec4 position_depth; // 16 bytes
+    //     uint color;          // 4 bytes
+    //     float size;          // 4 bytes
+    //     vec2 _pad;           // 8 bytes (align to 32)
+    // };
 
-    // Attrib 0: Pos (vec3) - from pos_depth.xyz
+    const int STRIDE = 32;
+
+    // Attrib 0: Pos (vec3) - from position_depth.xyz
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 48, (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
 
-    // Attrib 1: Color (vec4)
+    // Attrib 1: Color (vec4) - Unpack from uint (GL_UNSIGNED_BYTE, normalized = TRUE)
+    // Source is at offset 16 (after position_depth)
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 48, (void*)16);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)16);
 
-    // Attrib 2: Linear Depth (float) - from pos_depth.w
+    // Attrib 2: Linear Depth (float) - from position_depth.w
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 48, (void*)12); // Offset 12 is .w of first vec4
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)12);
 
-    // Attrib 3: Size (float)
+    // Attrib 3: Size (float) - offset 20 (after color)
     glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, 48, (void*)32);
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)20);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -153,8 +147,8 @@ static void uploadGasData(GasResources& res, const std::vector<GasVertex>& verti
     glBufferData(GL_SHADER_STORAGE_BUFFER, vertices.size() * sizeof(GasVertex), vertices.data(), GL_STATIC_DRAW);
 
     // 2. Allocate Output (Dynamic)
-    // 48 bytes per vertex
-    size_t outputSize = vertices.size() * 48;
+    // 32 bytes per vertex (Packed GasRender)
+    size_t outputSize = vertices.size() * 32;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, res.outputSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, outputSize, NULL, GL_DYNAMIC_DRAW);
 
@@ -215,6 +209,15 @@ Color4 getGasColor(GasType type, float density, bool& isDarkLane) {
     return color;
 }
 
+// Helper to pack float color to uint32
+uint32_t packColor(Color4 c) {
+    uint8_t r = (uint8_t)(glm::clamp(c.r, 0.0f, 1.0f) * 255.0f);
+    uint8_t g = (uint8_t)(glm::clamp(c.g, 0.0f, 1.0f) * 255.0f);
+    uint8_t b = (uint8_t)(glm::clamp(c.b, 0.0f, 1.0f) * 255.0f);
+    uint8_t a = (uint8_t)(glm::clamp(c.a, 0.0f, 1.0f) * 255.0f);
+    return (a << 24) | (b << 16) | (g << 8) | r;
+}
+
 // Helper to spawn a single cloud's particles
 void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
                          float orbitalRadius, float angle, float y,
@@ -240,32 +243,36 @@ void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
 
         // 1. Orbital
         v.orbitalRadius = orbitalRadius;
-        v.initialAngle = angle;
-        v.angularVelocity = velocity;
-        v._pad0 = 0;
+        // SCALE velocity by 1000 to avoid subnormal FP16 precision loss at large radii
+        v.packedOrbital = glm::packHalf2x16(glm::vec2(angle, velocity * 1000.0f));
 
         // 2. Local Offset (Ellipsoid Shape)
         // Stretch along orbit (tangent)
         float stretch = 2.0f + dist(rng) * 2.0f;
-        v.offsetX = normalDist(rng) * size * stretch;
-        v.offsetY = y + normalDist(rng) * size * 0.5f; // Flattened Y
-        v.offsetZ = normalDist(rng) * size;
-        v._pad1 = 0;
+        float offsetX = normalDist(rng) * size * stretch;
+        float offsetY = y + normalDist(rng) * size * 0.5f; // Flattened Y
+        float offsetZ = normalDist(rng) * size;
 
-        // 3. Visuals
-        v.r = baseColor.r;
-        v.g = baseColor.g;
-        v.b = baseColor.b;
+        v.packedOffsetsXY = glm::packHalf2x16(glm::vec2(offsetX, offsetY));
 
+        // 3. Animation
+        float particleSize = (0.5f + dist(rng)) * size * 2.0f; // Base particle size
+        v.packedOffsetZSize = glm::packHalf2x16(glm::vec2(offsetZ, particleSize));
+
+        // 4. Visuals (Packed Color)
         // Vary alpha slightly for texture
         float alphaVar = 0.8f + dist(rng) * 0.4f;
-        v.a = baseColor.a * alphaVar;
+        Color4 finalColor = baseColor;
+        finalColor.a *= alphaVar;
+        v.color = packColor(finalColor);
 
-        // 4. Animation
-        v.size = (0.5f + dist(rng)) * size * 2.0f; // Base particle size
-        v.turbulencePhase = dist(rng) * 2.0f * M_PI;
-        v.turbulenceSpeed = 0.5f + dist(rng) * 0.5f;
-        v._pad2 = 0;
+        // 5. Turbulence
+        float turbPhase = dist(rng) * 2.0f * M_PI;
+        float turbSpeed = 0.5f + dist(rng) * 0.5f;
+        v.packedTurbulence = glm::packHalf2x16(glm::vec2(turbPhase, turbSpeed));
+
+        v._pad0 = 0;
+        v._pad1 = 0;
 
         targetBuffer.push_back(v);
     }

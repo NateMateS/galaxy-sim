@@ -2,21 +2,24 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 layout(local_size_x = 256) in;
 
-// Aligned to 64 bytes
+// Packed Input (32 bytes)
 struct GasInput {
-    vec4 orbital; // x: radius, y: angle, z: velocity, w: pad
-    vec4 offset;  // xyz: offset, w: pad
-    vec4 color;   // rgba
-    vec4 params;  // x: size, y: turbPhase, z: turbSpeed, w: pad
+    float orbitalRadius;       // 4 bytes
+    uint packedOrbital;        // 4 bytes (angle, velocity) - Half2x16
+    uint packedOffsetsXY;      // 4 bytes (x, y) - Half2x16
+    uint packedOffsetZSize;    // 4 bytes (z, size) - Half2x16
+    uint color;                // 4 bytes (rgba8)
+    uint packedTurbulence;     // 4 bytes (phase, speed) - Half2x16
+    uint _pad0;                // 4 bytes
+    uint _pad1;                // 4 bytes
 };
 
+// Packed Output (32 bytes)
 struct GasRender {
-    vec4 position_depth; // xyz: view_space_pos, w: linear_depth
-    vec4 color;
-    float size;
-    float _pad0;
-    float _pad1;
-    float _pad2; // Align to 32 bytes (vec4 + vec4 + vec4)
+    vec4 position_depth; // 16 bytes
+    uint color;          // 4 bytes
+    float size;          // 4 bytes
+    vec2 _pad;           // 8 bytes (align to 32)
 };
 
 struct DrawCommand {
@@ -41,8 +44,7 @@ layout(std430, binding = 2) buffer IndirectBuffer {
 layout(std140, binding = 0) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 uniform float pointScale;
@@ -66,16 +68,28 @@ bool isVisible(vec3 viewPos, float radius) {
 }
 
 void main() {
+    float time = viewPosTime.w;
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= particles.length()) return;
 
     GasInput p = particles[idx];
 
-    // --- Physics Simulation (Match gas.vert) ---
-    float orbitalRadius = p.orbital.x;
-    float initialAngle = p.orbital.y;
-    float angularVelocity = p.orbital.z;
+    // --- Unpack Data ---
+    float orbitalRadius = p.orbitalRadius;
+    vec2 orbitalParams = unpackHalf2x16(p.packedOrbital);
+    float initialAngle = orbitalParams.x;
+    float angularVelocity = orbitalParams.y / 1000.0; // Unscale velocity
 
+    vec2 offsetsXY = unpackHalf2x16(p.packedOffsetsXY);
+    vec2 offsetZSize = unpackHalf2x16(p.packedOffsetZSize);
+    vec3 offset = vec3(offsetsXY.x, offsetsXY.y, offsetZSize.x);
+    float size = offsetZSize.y;
+
+    vec2 turbulenceParams = unpackHalf2x16(p.packedTurbulence);
+    float turbPhase = turbulenceParams.x;
+    float turbSpeed = turbulenceParams.y;
+
+    // --- Physics Simulation ---
     // 1. Orbital Angle
     float currentAngle = initialAngle + angularVelocity * time;
     float cosA = cos(currentAngle);
@@ -84,12 +98,12 @@ void main() {
     vec3 cloudCenter = vec3(orbitalRadius * cosA, 0.0, orbitalRadius * sinA);
 
     // 2. Rotate Local Offset
-    float localX = p.offset.x * cosA - p.offset.z * sinA;
-    float localZ = p.offset.x * sinA + p.offset.z * cosA;
-    vec3 rotatedOffset = vec3(localX, p.offset.y, localZ);
+    float localX = offset.x * cosA - offset.z * sinA;
+    float localZ = offset.x * sinA + offset.z * cosA;
+    vec3 rotatedOffset = vec3(localX, offset.y, localZ);
 
     // 3. Turbulence
-    float turbulence = sin(time * p.params.z + p.params.y);
+    float turbulence = sin(time * turbSpeed + turbPhase);
     vec3 turbOffset = vec3(0.0, turbulence * 2.0, 0.0);
 
     // 4. World Position
@@ -100,14 +114,14 @@ void main() {
     vec3 viewPos = viewPosVec.xyz;
 
     // --- Frustum Culling ---
-    if (!isVisible(viewPos, p.params.x)) return;
+    if (!isVisible(viewPos, size)) return;
 
     // --- Render Prep ---
     float dist = length(viewPos);
     if (dist < 0.1) dist = 0.1;
 
     // --- Stochastic LOD ---
-    float baseSize = p.params.x;
+    float baseSize = size;
     float scale = (pointScale < 1.0) ? 200.0 : pointScale;
     float projectedSize = scale * baseSize * (1.0 / dist);
 
@@ -146,13 +160,17 @@ void main() {
 
     // Alpha Fade near camera
     float alphaFade = smoothstep(1.0, 50.0, dist);
-    vec4 finalColor = p.color;
+
+    // Unpack Color
+    vec4 unpackedColor = unpackUnorm4x8(p.color);
 
     // Apply stochastic compensation and camera fade
-    // Note: max(keepProbability, 0.001) prevents division by zero
-    finalColor.a *= alphaFade * (1.0 / max(keepProbability, 0.001));
+    unpackedColor.a *= alphaFade * (1.0 / max(keepProbability, 0.001));
 
-    if (finalColor.a < 0.001) return;
+    if (unpackedColor.a < 0.001) return;
+
+    // Repack color for output (optional, but we use uint in struct)
+    uint finalColorPacked = packUnorm4x8(unpackedColor);
 
     // --- Output Aggregation ---
     uvec4 ballot = subgroupBallot(true);
@@ -167,6 +185,7 @@ void main() {
     uint outIdx = baseIndex + localOffset;
 
     visibleParticles[outIdx].position_depth = vec4(viewPos, -viewPos.z);
-    visibleParticles[outIdx].color = finalColor;
+    visibleParticles[outIdx].color = finalColorPacked;
     visibleParticles[outIdx].size = finalSize;
+    visibleParticles[outIdx]._pad = vec2(0.0);
 }

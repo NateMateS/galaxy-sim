@@ -6,8 +6,7 @@ uniform mat4 model;
 layout (std140) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 void main()

@@ -1,18 +1,23 @@
 #version 430 core
 layout(location = 0) in vec4 aPosDoppler; // xyz: pos, w: doppler
-layout(location = 1) in vec4 aColorSize;  // xyz: color, w: size/brightness
+layout(location = 1) in vec4 aColor;      // Unpacked from uint
+layout(location = 2) in float aSize;      // size/brightness
 
 out vec4 vColor; // rgb: color, a: brightness
 
-uniform mat4 view;
-uniform mat4 projection;
+layout(std140, binding = 0) uniform GlobalUniforms {
+    mat4 view;
+    mat4 projection;
+    vec4 viewPosTime;
+};
+
 uniform float screenHeight;
 
 void main() {
     vec3 pos = aPosDoppler.xyz;
     float doppler = aPosDoppler.w;
-    vec3 color = aColorSize.rgb;
-    float brightness = aColorSize.w;
+    vec3 color = aColor.rgb;
+    float brightness = aSize;
 
     gl_Position = projection * view * vec4(pos, 1.0);
 

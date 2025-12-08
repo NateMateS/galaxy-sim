@@ -2,7 +2,7 @@
 
 // Inputs match the VAO layout defined in GalacticGas.cpp
 layout (location = 0) in vec3 aViewPos;    // From GasRender.position_depth.xyz
-layout (location = 1) in vec4 aColor;      // From GasRender.color
+layout (location = 1) in vec4 aColor;      // From GasRender.color (Unpacked from uint)
 layout (location = 2) in float aLinearDepth; // From GasRender.position_depth.w
 layout (location = 3) in float aSize;      // From GasRender.size
 
@@ -12,8 +12,7 @@ out float LinearDepth;
 layout (std140) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 uniform float pointMultiplier;

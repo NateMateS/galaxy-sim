@@ -14,26 +14,16 @@ enum class GasType {
 };
 
 // Flattened stateless particle structure for GPU simulation
-// Aligned to 64 bytes (4x vec4) for optimal GPU access
+// Packed to 32 bytes for memory optimization
 struct GasVertex {
-    // 1. Orbital Mechanics (vec4: radius, angle, velocity, padding)
-    float orbitalRadius;
-    float initialAngle; // Where the cloud started
-    float angularVelocity; // How fast it orbits the galaxy
-    float _pad0;
-
-    // 2. Local Shape (vec4: x, y, z offsets from cloud center, padding)
-    float offsetX, offsetY, offsetZ;
-    float _pad1;
-
-    // 3. Visuals (vec4: r, g, b, a)
-    float r, g, b, a;
-
-    // 4. Animation Params (vec4: size, turbPhase, turbSpeed, padding)
-    float size;
-    float turbulencePhase;
-    float turbulenceSpeed;
-    float _pad2;
+    float orbitalRadius;       // 4 bytes
+    uint32_t packedOrbital;    // 4 bytes (angle, velocity) - Half Float
+    uint32_t packedOffsetsXY;  // 4 bytes (x, y) - Half Float
+    uint32_t packedOffsetZSize;// 4 bytes (z, size) - Half Float
+    uint32_t color;            // 4 bytes (rgba8)
+    uint32_t packedTurbulence; // 4 bytes (phase, speed) - Half Float
+    uint32_t _pad0;            // 4 bytes
+    uint32_t _pad1;            // 4 bytes
 };
 
 struct GasConfig {

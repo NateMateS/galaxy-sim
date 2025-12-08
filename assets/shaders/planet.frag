@@ -12,8 +12,7 @@ uniform vec3 atmosphereColor;
 layout (std140) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos; // .xyz is position
-    float time;
+    vec4 viewPosTime; // .xyz is position
 };
 
 void main()
@@ -24,7 +23,7 @@ void main()
     float diff = max(dot(norm, lightDir), 0.0);
 
     // 2. Specular (Water Only - simplifed)
-    vec3 viewDir = normalize(viewPos.xyz - FragPos);
+    vec3 viewDir = normalize(viewPosTime.xyz - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
 

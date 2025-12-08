@@ -2,14 +2,20 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 layout(local_size_x = 256) in;
 
+// Packed Input (16 bytes)
 struct StarInput {
-    vec4 orbit;  // x: radius, y: initialAngle, z: y_pos, w: angularVelocity
-    vec4 color;  // x: r, y: g, z: b, w: brightness
+    float radius;            // 4
+    uint packedOrbital;      // 4 (angle, velocity)
+    uint packedYBright;      // 4 (y, brightness)
+    uint color;              // 4 (rgba8)
 };
 
+// Packed Output (24 bytes)
 struct StarRender {
-    vec4 position_doppler; // xyz: position, w: doppler_shift
-    vec4 color_size;       // xyz: color, w: size/brightness
+    float px, py, pz; // 12
+    float doppler;    // 4
+    uint color;       // 4
+    float size;       // 4
 };
 
 struct DrawCommand {
@@ -34,8 +40,7 @@ layout(std430, binding = 2) buffer IndirectBuffer {
 layout(std140, binding = 0) uniform GlobalUniforms {
     mat4 view;
     mat4 projection;
-    vec4 viewPos;
-    float time;
+    vec4 viewPosTime;
 };
 
 uniform float screenHeight;
@@ -57,10 +62,23 @@ void main() {
 
     StarInput inStar = stars[idx];
 
+    // --- Unpack ---
+    float radius = inStar.radius;
+    vec2 orbital = unpackHalf2x16(inStar.packedOrbital);
+    float initialAngle = orbital.x;
+    float velocity = orbital.y / 1000.0; // Unscale velocity
+
+    vec2 yBright = unpackHalf2x16(inStar.packedYBright);
+    float y = yBright.x;
+    float rawBrightness = yBright.y;
+
+    vec4 unpackedColor = unpackUnorm4x8(inStar.color);
+    vec3 baseColor = unpackedColor.rgb;
+
+    float time = viewPosTime.w;
+
     // 1. Orbital Physics
-    float radius = inStar.orbit.x;
-    float currentAngle = inStar.orbit.y + inStar.orbit.w * time;
-    float y = inStar.orbit.z;
+    float currentAngle = initialAngle + velocity * time;
 
     float cosA = cos(currentAngle);
     float sinA = sin(currentAngle);
@@ -68,29 +86,40 @@ void main() {
     vec3 pos = vec3(radius * cosA, y, radius * sinA);
 
     // 2. Frustum Culling
-    // Simple point culling
     if (!isVisible(pos, 0.0)) return;
 
     // 3. Doppler Calculation
     // Velocity vector direction is (-sin, 0, cos)
-    vec3 orbitVel = vec3(-sinA, 0.0, cosA) * radius * inStar.orbit.w;
+    vec3 orbitVel = vec3(-sinA, 0.0, cosA) * radius * velocity;
     vec3 viewVel = vec3(view * vec4(orbitVel, 0.0));
     float radialSpeed = viewVel.z;
     float shift = clamp(radialSpeed * 0.1, -0.9, 0.9);
 
     // 4. Color Processing
-    vec3 baseColor = inStar.color.rgb;
     vec3 dopplerColor = baseColor * vec3(1.0 - shift, 1.0 - abs(shift) * 0.2, 1.0 + shift);
+    // Clamp color to 0..1 for packing
+    dopplerColor = clamp(dopplerColor, 0.0, 1.0);
 
     // 5. Brightness & Size
-    // Calculate view space depth for size attenuation
     vec4 viewPosVec = view * vec4(pos, 1.0);
     float dist = length(viewPosVec.xyz);
     if(dist < 0.1) dist = 0.1;
 
     float attenuation = 1.0 / (1.0 + 0.0001 * dist + 0.000005 * dist * dist);
-    float brightness = inStar.color.w * attenuation;
+    float brightness = rawBrightness * attenuation;
     float mappedBrightness = sqrt(brightness);
+
+    // Repack color (include brightness in alpha? No, size/brightness is separate float)
+    // Wait, vertex shader needs color and brightness.
+    // Previously: aColorSize (color, brightness).
+    // New: color (uint), size (float).
+    // I should pack color into uint.
+    // What about brightness?
+    // mappedBrightness is passed as "size" or "brightness" to vertex shader.
+    // Vertex shader uses it for size calculation AND alpha.
+    // "StarRender.size" = mappedBrightness.
+
+    uint packedDopplerColor = packUnorm4x8(vec4(dopplerColor, 1.0));
 
     // 6. Write to Output (Subgroup Optimized)
     uvec4 ballot = subgroupBallot(true);
@@ -110,6 +139,10 @@ void main() {
 
     uint outIdx = baseIndex + localOffset;
 
-    visibleStars[outIdx].position_doppler = vec4(pos, shift);
-    visibleStars[outIdx].color_size = vec4(dopplerColor, mappedBrightness);
+    visibleStars[outIdx].px = pos.x;
+    visibleStars[outIdx].py = pos.y;
+    visibleStars[outIdx].pz = pos.z;
+    visibleStars[outIdx].doppler = shift;
+    visibleStars[outIdx].color = packedDopplerColor;
+    visibleStars[outIdx].size = mappedBrightness;
 }
