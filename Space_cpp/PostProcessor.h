@@ -38,6 +38,10 @@ public:
     unsigned int ScreenTexture; // Texture attachment for Intermediate FBO
     unsigned int DepthTexture; // Resolved Depth Texture
 
+    // Single-sample depth copy for reading in shaders while testing against DepthTexture
+    unsigned int ResolvedDepthCopyFBO;
+    unsigned int ResolvedDepthCopyTexture;
+
     // Bloom Mip Chain
     unsigned int MipChainFBO;
     std::vector<BloomMip> mipChain;
@@ -59,6 +63,8 @@ public:
     PostProcessor& operator=(const PostProcessor&) = delete;
 
     void BeginRender();
+    // Resolves MSAA Opaque pass to Intermediate FBO for Transparent rendering
+    void PerformOpaqueResolve();
     void EndRender();
 
     // Quarter-Resolution Gas Pass

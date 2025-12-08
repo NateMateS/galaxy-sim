@@ -72,7 +72,7 @@ void render(const std::vector<StarInput>& stars, const std::vector<BlackHole>& b
         return;
     }
 
-    // 1. Render to HDR/MSAA Framebuffer
+    // 1. Render Opaque to MSAA Framebuffer
     postProcessor->BeginRender();
 
     glm::mat4 view, projection;
@@ -85,8 +85,6 @@ void render(const std::vector<StarInput>& stars, const std::vector<BlackHole>& b
         globalUniforms->update(view, projection, glm::vec3(camera.posX, camera.posY, camera.posZ), (float)glfwGetTime());
     }
 
-    // Render Order: Opaque -> Transparent
-
 	if (solarSystem.isGenerated) {
 		if (!sunShader) fprintf(stderr, "sunShader is NULL\n");
 		if (!planetShader) fprintf(stderr, "planetShader is NULL\n");
@@ -95,34 +93,43 @@ void render(const std::vector<StarInput>& stars, const std::vector<BlackHole>& b
 		renderSolarSystem(zone, camera, sunTexture, planetTexture, sunShader.get(), planetShader.get(), orbitShader.get());
 	}
 
-    // Copy Depth to break Feedback Loop (Read Copy, Write Original)
-    postProcessor->CopyDepth();
+    // 2. Resolve Opaque to Intermediate FBO & Create Depth Copy
+    // This prepares the pipeline for Transparent rendering
+    postProcessor->PerformOpaqueResolve();
 
-    // 2. Prepare & Cull Gas Particles (Compute Shader)
-    prepareGalacticGas(darkGas, luminousGas, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture, (float)WIDTH, (float)HEIGHT, zone, view, projection);
+    // Note: PerformOpaqueResolve binds IntermediateFBO for drawing.
+    // We are rendering Transparents (Stars, Gas, etc.) into the Single-Sample Intermediate FBO.
+    // We disable Depth Writing but keep Depth Testing (against the resolved depth).
+    // This is handled in the specific render functions, but global state sets the stage.
 
-    // 3. Render Dark Gas (Full Res, Occlusion)
-    // Must be done before stars so they are occluded properly
-    drawDarkGas(gasShader.get(), view, projection, (float)glfwGetTime(), postProcessor->MSAADepthCopyTexture);
+    // 3. Prepare & Cull Gas Particles (Compute Shader)
+    // Reads ResolvedDepthCopyTexture (Single Sample) for occlusion culling
+    prepareGalacticGas(darkGas, luminousGas, (float)glfwGetTime(), postProcessor->ResolvedDepthCopyTexture, (float)WIDTH, (float)HEIGHT, zone, view, projection);
+
+    // 4. Render Dark Gas (Full Res, Occlusion)
+    // Reads ResolvedDepthCopyTexture for soft particles
+    drawDarkGas(gasShader.get(), view, projection, (float)glfwGetTime(), postProcessor->ResolvedDepthCopyTexture);
 
     // Transparent / Additive
-    // Stars (Additive)
+    // Stars (Additive) - Rendered to Intermediate FBO
 	renderStars(zone, view, projection, glm::vec3(camera.posX, camera.posY, camera.posZ), (float)glfwGetTime());
 
-    // 4. Luminous Gas Pass (Quarter Res)
-    postProcessor->PrepareGasPass(); // Downsample Depth to R32F
+    // 5. Luminous Gas Pass (Quarter Res)
+    // Downsamples ResolvedDepthCopyTexture to LowResDepthTexture
+    postProcessor->PrepareGasPass();
     postProcessor->BeginGasPass(); // Switch to Quarter-Res FBO
 
     // Draw using the optimized Low-Res Shader
-    // Texture binding and uniform setup is now handled inside drawLuminousGas
+    // Reads LowResDepthTexture (generated in PrepareGasPass) for soft particles
     drawLuminousGas(gasLowResShader.get(), view, projection, (float)glfwGetTime(), postProcessor->LowResDepthTexture, true);
 
-    postProcessor->EndGasPass(); // Composites back to Main FBO
+    postProcessor->EndGasPass(); // Composites back to Intermediate FBO
 
-    // Black Holes (Blend)
+    // Black Holes (Blend) - Rendered to Intermediate FBO
 	renderBlackHoles(blackHoles, zone, camera, view, projection, noiseTexture, blackHoleShader.get());
 
-    // 2. Post-Processing (Bloom, Tone Mapping) -> Screen
+    // 6. Post-Processing (Bloom, Tone Mapping) -> Screen
+    // Reads Intermediate FBO
     postProcessor->EndRender();
 
     // UI rendered on top of everything (Post-process result is just a quad)

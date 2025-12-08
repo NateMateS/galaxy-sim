@@ -50,9 +50,6 @@ static void InitComputeShader() {
     glDeleteShader(shader);
 }
 
-// Keep CPU noise methods if needed for other things, but they are not used for textures anymore.
-// We can remove them to clean up or keep them as fallback. I will remove them to enforce GPU usage.
-
 static void DispatchGen(unsigned int textureID, int width, int height, int mode, float scale, int octaves, float persistence, int seed, float waterLevel = 0.0f, float r1=0, float g1=0, float b1=0, float r2=0, float g2=0, float b2=0) {
     InitComputeShader();
     if (computeProgram == 0) return;
@@ -78,15 +75,7 @@ static void DispatchGen(unsigned int textureID, int width, int height, int mode,
 
     // Dispatch
     glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-}
-
-float TextureGenerator::Noise(float x, float y, float z, int seed) {
-    return 0.0f; // Deprecated
-}
-
-float TextureGenerator::OctaveNoise(float x, float y, float z, int octaves, float persistence, int seed) {
-    return 0.0f; // Deprecated
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 }
 
 unsigned int TextureGenerator::GenerateNoiseTexture(int width, int height, float scale, float persistence, int octaves, unsigned int seed) {
@@ -113,6 +102,27 @@ unsigned int TextureGenerator::GenerateNoiseTexture(int width, int height, float
 
     glBindTexture(GL_TEXTURE_2D, textureID);
     glGenerateMipmap(GL_TEXTURE_2D);
+
+    return textureID;
+}
+
+unsigned int TextureGenerator::GenerateGlowSprite(int width, int height) {
+    unsigned int textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+    // Clamp to edge to avoid artifacts
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Mode 3: Glow Sprite
+    DispatchGen(textureID, width, height, 3, 1.0f, 1, 0.0f, 0);
+
+    // Mipmaps disabled to avoid synchronization issues with compute shader
+    glBindTexture(GL_TEXTURE_2D, textureID);
 
     return textureID;
 }

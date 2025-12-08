@@ -5,7 +5,7 @@ in vec2 TexCoords;
 
 uniform sampler2D gasTexture;          // Low-Res Color
 uniform sampler2D quarterResLinearDepth;  // Low-Res Depth (Linear)
-uniform sampler2DMS highResDepth;      // High-Res Depth (MSAA)
+uniform sampler2D highResDepth;      // High-Res Depth (Single Sample Resolved)
 
 uniform float zNear;
 uniform float zFar;

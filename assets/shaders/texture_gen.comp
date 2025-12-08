@@ -2,7 +2,7 @@
 layout (local_size_x = 16, local_size_y = 16) in;
 layout (rgba8, binding = 0) uniform image2D imgOutput;
 
-uniform int mode; // 0: Noise (2D), 1: Planet (Spherical), 2: Sun (Spherical)
+uniform int mode; // 0: Noise (2D), 1: Planet (Spherical), 2: Sun (Spherical), 3: Glow Sprite
 uniform int width;
 uniform int height;
 uniform float scale;
@@ -135,6 +135,22 @@ void main() {
             r = 0.8 + 0.2 * t; g = 0.2 * t; b = 0.0;
         }
         pixel = vec4(r, g, b, 1.0);
+    }
+    else if (mode == 3) { // Glow Sprite
+        float dx = nx * 2.0 - 1.0;
+        float dy = ny * 2.0 - 1.0;
+        float distSq = dx*dx + dy*dy;
+
+        // Soft Gaussian glow
+        float alpha = exp(-distSq * 4.0);
+
+        // Harder core
+        float core = exp(-distSq * 16.0);
+
+        float finalAlpha = alpha;
+
+        // White core, slight tint on edge handled by vertex color usually
+        pixel = vec4(1.0, 1.0, 1.0, finalAlpha);
     }
 
     imageStore(imgOutput, texelCoord, pixel);

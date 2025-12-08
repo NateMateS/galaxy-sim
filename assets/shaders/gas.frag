@@ -4,7 +4,7 @@ out vec4 FragColor;
 in vec4 Color;
 in float LinearDepth;
 
-uniform sampler2DMS depthMap; // Multisampled Depth
+uniform sampler2D depthMap; // Single-sampled Resolved Depth
 uniform float zNear;
 uniform float zFar;
 uniform float softnessScale; // Controls how soft the intersection is (e.g. 1.0)
@@ -19,8 +19,7 @@ void main()
     if (distSq > 0.25) discard;
 
     // 2. Depth Buffer Softness (Intersection with geometry)
-    // Use texelFetch for MSAA texture (Sample 0 is sufficient for soft particles)
-    // Adjust coordinates if rendering at quarter resolution
+    // Use texelFetch for single-sample texture
     ivec2 screenCoords = ivec2(gl_FragCoord.xy * resolutionScale);
     float sceneDepthNonLinear = texelFetch(depthMap, screenCoords, 0).r;
 

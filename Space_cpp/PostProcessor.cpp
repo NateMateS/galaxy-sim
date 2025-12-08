@@ -56,6 +56,9 @@ PostProcessor::~PostProcessor() {
     glDeleteTextures(1, &ScreenTexture);
     glDeleteTextures(1, &DepthTexture);
 
+    glDeleteFramebuffers(1, &ResolvedDepthCopyFBO);
+    glDeleteTextures(1, &ResolvedDepthCopyTexture);
+
     glDeleteFramebuffers(1, &MipChainFBO);
     for (auto& mip : mipChain) {
         glDeleteTextures(1, &mip.texture);
@@ -173,6 +176,25 @@ void PostProcessor::InitFramebuffers() {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cout << "ERROR::POSTPROCESSOR: Intermediate Framebuffer not complete!" << std::endl;
 
+    // 2b. Resolved Depth Copy FBO (for reading depth while testing against Intermediate)
+    glGenFramebuffers(1, &ResolvedDepthCopyFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, ResolvedDepthCopyFBO);
+
+    glGenTextures(1, &ResolvedDepthCopyTexture);
+    glBindTexture(GL_TEXTURE_2D, ResolvedDepthCopyTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, Width, Height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, ResolvedDepthCopyTexture, 0);
+    // No color attachment
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "ERROR::POSTPROCESSOR: Resolved Depth Copy Framebuffer not complete!" << std::endl;
+
     InitBloomMips();
 }
 
@@ -224,16 +246,30 @@ void PostProcessor::BeginRender() {
     glEnable(GL_DEPTH_TEST);
 }
 
+void PostProcessor::PerformOpaqueResolve() {
+    // 1. Resolve MSAA Color -> Intermediate ScreenTexture (Implicitly)
+    // 2. Resolve MSAA Depth -> Intermediate DepthTexture
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, MSAAFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, IntermediateFBO);
+    glBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+    // 3. Copy Resolved Depth -> ResolvedDepthCopyTexture (for sampling)
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, IntermediateFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ResolvedDepthCopyFBO);
+    glBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+    // 4. Bind Intermediate FBO for Transparent Rendering
+    glBindFramebuffer(GL_FRAMEBUFFER, IntermediateFBO);
+    glViewport(0, 0, Width, Height);
+    // Depth Test Enabled, Depth Mask False usually (set by renderer)
+}
+
 void PostProcessor::EndRender() {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST); // Ensure we draw to the full FBO
 
-    // 1. Resolve MSAA to Intermediate FBO (Full Res)
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, MSAAFBO);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, IntermediateFBO);
-    glBlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     // 2. Dual-Filter Bloom Pass
     glBindFramebuffer(GL_FRAMEBUFFER, MipChainFBO);
@@ -322,7 +358,7 @@ void PostProcessor::PrepareGasPass() {
     depthDownsampleShader->setFloat("downsampleScale", 1.0f / LOW_RES_SCALE);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, MSAADepthCopyTexture);
+    glBindTexture(GL_TEXTURE_2D, ResolvedDepthCopyTexture); // Use Resolved Single-Sample Depth
 
     // Full screen quad to downsample
     glBindVertexArray(QuadVAO);
@@ -343,8 +379,8 @@ void PostProcessor::BeginGasPass() {
 }
 
 void PostProcessor::EndGasPass() {
-    // Composite Gas back to Main FBO
-    glBindFramebuffer(GL_FRAMEBUFFER, MSAAFBO);
+    // Composite Gas back to Intermediate FBO (Single Sample)
+    glBindFramebuffer(GL_FRAMEBUFFER, IntermediateFBO);
     glViewport(0, 0, Width, Height);
 
     glEnable(GL_BLEND);
@@ -363,7 +399,7 @@ void PostProcessor::EndGasPass() {
     glBindTexture(GL_TEXTURE_2D, LowResDepthTexture);
 
     glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, MSAADepthCopyTexture);
+    glBindTexture(GL_TEXTURE_2D, ResolvedDepthCopyTexture); // Use Resolved Single-Sample Depth
 
     glBindVertexArray(QuadVAO);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -394,6 +430,9 @@ void PostProcessor::Resize(unsigned int width, unsigned int height) {
     glDeleteFramebuffers(1, &IntermediateFBO);
     glDeleteTextures(1, &ScreenTexture);
     glDeleteTextures(1, &DepthTexture);
+
+    glDeleteFramebuffers(1, &ResolvedDepthCopyFBO);
+    glDeleteTextures(1, &ResolvedDepthCopyTexture);
 
     glDeleteFramebuffers(1, &MipChainFBO);
     for (auto& mip : mipChain) {

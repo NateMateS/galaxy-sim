@@ -405,7 +405,7 @@ void prepareGalacticGas(const std::vector<GasVertex>& darkVertices, const std::v
 
     // Bind Depth Map for Occlusion Culling
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
+    glBindTexture(GL_TEXTURE_2D, depthTexture);
     glUniform1i(glGetUniformLocation(computeProgram, "depthMap"), 0);
 
     // Uniforms for Coordinate Conversion & Stochastic LOD
@@ -444,7 +444,7 @@ void drawDarkGas(Shader* gasShader, const glm::mat4& view, const glm::mat4& proj
 
     // Bind Depth Map for Soft Particles
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
+    glBindTexture(GL_TEXTURE_2D, depthTexture);
     gasShader->setInt("depthMap", 1);
     gasShader->setFloat("zNear", 0.1f);
     gasShader->setFloat("zFar", 20000.0f);
@@ -487,7 +487,7 @@ void drawLuminousGas(Shader* gasShader, const glm::mat4& view, const glm::mat4& 
     if (!quarterRes) {
         // Full Res: Use Hardware Depth Test + Manual Softness Read
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, depthTexture);
+        glBindTexture(GL_TEXTURE_2D, depthTexture);
         gasShader->setInt("depthMap", 1);
 
         glEnable(GL_DEPTH_TEST);

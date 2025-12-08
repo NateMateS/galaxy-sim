@@ -2,22 +2,13 @@
 in vec4 vColor; // rgb: color, a: brightness
 out vec4 FragColor;
 
+uniform sampler2D spriteTexture;
+
 void main() {
-    vec2 coord = gl_PointCoord - vec2(0.5);
-    float distSq = dot(coord, coord);
-
-    if (distSq > 0.25) discard;
-
-    // Core: Sharp, high intensity
-    float core = exp(-distSq * 80.0);
-
-    // Halo: Wide, faint glow
-    float halo = exp(-distSq * 8.0) * 0.4;
-
-    // Combine
-    float alpha = core + halo;
+    // Sample pre-computed sprite
+    // gl_PointCoord is 0..1, which matches texture UVs perfectly
+    float alpha = texture(spriteTexture, gl_PointCoord).a;
 
     // Apply brightness from vertex shader (vColor.a)
-    // This ensures dim stars are actually fainter, not just smaller.
     FragColor = vec4(vColor.rgb, alpha * vColor.a);
 }

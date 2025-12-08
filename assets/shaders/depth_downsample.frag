@@ -3,7 +3,7 @@ out float LinearDepth;
 
 in vec2 TexCoords;
 
-uniform sampler2DMS depthMap; // Original MSAA Depth
+uniform sampler2D depthMap; // Single-Sample Resolved Depth
 uniform float zNear;
 uniform float zFar;
 uniform float downsampleScale; // e.g. 4.0 for Quarter-Res
@@ -22,7 +22,7 @@ void main()
     ivec2 sourceBase = ivec2(floor(gl_FragCoord.xy) * downsampleScale);
 
     // Get source texture dimensions for bounds checking
-    ivec2 texSize = textureSize(depthMap);
+    ivec2 texSize = textureSize(depthMap, 0);
 
     // Initialize minDepth to the farthest possible value (1.0)
     // We want to find the NEAREST depth in the block to preserve occlusion.
@@ -39,7 +39,7 @@ void main()
             // Clamp coordinates to valid range to prevent undefined behavior
             sampleCoord = min(sampleCoord, texSize - ivec2(1));
 
-            // Fetch depth from MSAA texture (Sample 0)
+            // Fetch depth from Texture (Single Sample)
             float depth = texelFetch(depthMap, sampleCoord, 0).r;
 
             // Take the minimum depth (closest to camera)

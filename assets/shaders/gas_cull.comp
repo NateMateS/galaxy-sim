@@ -46,7 +46,7 @@ layout(std140, binding = 0) uniform GlobalUniforms {
 };
 
 uniform float pointScale;
-uniform sampler2DMS depthMap;
+uniform sampler2D depthMap;
 uniform float screenWidth;
 uniform float screenHeight;
 uniform float zNear;

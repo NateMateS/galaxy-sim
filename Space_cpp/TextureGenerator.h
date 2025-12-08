@@ -13,10 +13,9 @@ public:
     // Generates a turbulent star surface texture
     static unsigned int GenerateSunTexture(int width, int height, unsigned int seed);
 
+    // Generates a simple glow sprite for stars/particles
+    static unsigned int GenerateGlowSprite(int width, int height);
+
     // Frees the static compute program
     static void Cleanup();
-
-private:
-    static float Noise(float x, float y, float z, int seed);
-    static float OctaveNoise(float x, float y, float z, int octaves, float persistence, int seed);
 };

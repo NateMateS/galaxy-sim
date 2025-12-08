@@ -2,6 +2,7 @@
 #include "SolarSystem.h"
 #include "Shader.h"
 #include "Window.h"
+#include "TextureGenerator.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -23,6 +24,7 @@ static unsigned int indirectBuffer = 0;
 static unsigned int starVAO = 0; // Empty VAO for drawing
 static unsigned int computeProgram = 0;
 static std::unique_ptr<Shader> starRenderShader;
+static unsigned int starSpriteTexture = 0;
 
 // Capacity
 static size_t maxStars = 0;
@@ -99,6 +101,13 @@ void initStars() {
 
     // 2. Initialize Render Shader
     starRenderShader = std::make_unique<Shader>("assets/shaders/star.vert", "assets/shaders/star.frag");
+    starRenderShader->use();
+    starRenderShader->setInt("spriteTexture", 0);
+
+    // Generate Sprite Texture
+    if (starSpriteTexture == 0) {
+        starSpriteTexture = TextureGenerator::GenerateGlowSprite(128, 128);
+    }
 
     // 3. Create Buffers
     glGenBuffers(1, &inputSSBO);
@@ -136,6 +145,7 @@ void cleanupStars() {
     if (outputSSBO) glDeleteBuffers(1, &outputSSBO);
     if (indirectBuffer) glDeleteBuffers(1, &indirectBuffer);
     if (starVAO) glDeleteVertexArrays(1, &starVAO);
+    if (starSpriteTexture) glDeleteTextures(1, &starSpriteTexture);
     starRenderShader.reset();
 }
 
@@ -192,6 +202,9 @@ void renderStars(const RenderZone& zone, const glm::mat4& view, const glm::mat4&
     starRenderShader->setMat4("view", glm::value_ptr(view));
     starRenderShader->setMat4("projection", glm::value_ptr(projection));
     starRenderShader->setFloat("screenHeight", (float)HEIGHT);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, starSpriteTexture);
 
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_BLEND);
