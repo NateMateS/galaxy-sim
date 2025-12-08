@@ -82,21 +82,13 @@ unsigned int TextureGenerator::GenerateNoiseTexture(int width, int height, float
     unsigned int textureID;
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height); // Immutable storage required for image store? Not strictly but better.
-    // Or we use standard glTexImage2D with NULL
-    // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    // Let's stick to standard calls compatible with the project style
+    // Use mutable storage (glTexImage2D) to allow for subsequent mipmap generation.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // Compute Shader requires the texture to exist.
-    // However, we want mipmaps.
-    // If we use glTexStorage2D, it is immutable.
-    // Let's use mutable texture for mipmap generation flexibility later.
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
     DispatchGen(textureID, width, height, 0, scale, octaves, persistence, seed);
 
