@@ -10,10 +10,9 @@ struct StarInput {
     uint color;              // 4 (rgba8)
 };
 
-// Packed Output (24 bytes)
+// Packed Output (20 bytes)
 struct StarRender {
     float px, py, pz; // 12
-    float doppler;    // 4
     uint color;       // 4
     float size;       // 4
 };
@@ -142,7 +141,6 @@ void main() {
     visibleStars[outIdx].px = pos.x;
     visibleStars[outIdx].py = pos.y;
     visibleStars[outIdx].pz = pos.z;
-    visibleStars[outIdx].doppler = shift;
     visibleStars[outIdx].color = packedDopplerColor;
     visibleStars[outIdx].size = mappedBrightness;
 }

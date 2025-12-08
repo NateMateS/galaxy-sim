@@ -1,5 +1,5 @@
 #version 430 core
-layout(location = 0) in vec4 aPosDoppler; // xyz: pos, w: doppler
+layout(location = 0) in vec3 aPos;        // px, py, pz
 layout(location = 1) in vec4 aColor;      // Unpacked from uint
 layout(location = 2) in float aSize;      // size/brightness
 
@@ -14,8 +14,7 @@ layout(std140, binding = 0) uniform GlobalUniforms {
 uniform float screenHeight;
 
 void main() {
-    vec3 pos = aPosDoppler.xyz;
-    float doppler = aPosDoppler.w;
+    vec3 pos = aPos;
     vec3 color = aColor.rgb;
     float brightness = aSize;
 

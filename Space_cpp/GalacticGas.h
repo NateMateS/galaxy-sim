@@ -22,8 +22,6 @@ struct GasVertex {
     uint32_t packedOffsetZSize;// 4 bytes (z, size) - Half Float
     uint32_t color;            // 4 bytes (rgba8)
     uint32_t packedTurbulence; // 4 bytes (phase, speed) - Half Float
-    uint32_t _pad0;            // 4 bytes
-    uint32_t _pad1;            // 4 bytes
 };
 
 struct GasConfig {

@@ -101,32 +101,27 @@ static void initGasResources(GasResources& res) {
     glBindVertexArray(res.vao);
     glBindBuffer(GL_ARRAY_BUFFER, res.outputSSBO);
 
-    // Layout matches Packed GasRender struct in shader (32 bytes total)
+    // Layout matches Packed GasRender struct in shader (20 bytes total)
     // struct GasRender {
-    //     vec4 position_depth; // 16 bytes
-    //     uint color;          // 4 bytes
-    //     float size;          // 4 bytes
-    //     vec2 _pad;           // 8 bytes (align to 32)
+    //     float px, py, pz; // 12 bytes
+    //     uint color;       // 4 bytes
+    //     float size;       // 4 bytes
     // };
 
-    const int STRIDE = 32;
+    const int STRIDE = 20;
 
-    // Attrib 0: Pos (vec3) - from position_depth.xyz
+    // Attrib 0: Pos (vec3) - from px, py, pz (Offset 0)
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
 
     // Attrib 1: Color (vec4) - Unpack from uint (GL_UNSIGNED_BYTE, normalized = TRUE)
-    // Source is at offset 16 (after position_depth)
+    // Source is at offset 12 (after pos)
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)16);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)12);
 
-    // Attrib 2: Linear Depth (float) - from position_depth.w
+    // Attrib 2: Size (float) - offset 16 (after color)
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)12);
-
-    // Attrib 3: Size (float) - offset 20 (after color)
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)20);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)16);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -147,8 +142,8 @@ static void uploadGasData(GasResources& res, const std::vector<GasVertex>& verti
     glBufferData(GL_SHADER_STORAGE_BUFFER, vertices.size() * sizeof(GasVertex), vertices.data(), GL_STATIC_DRAW);
 
     // 2. Allocate Output (Dynamic)
-    // 32 bytes per vertex (Packed GasRender)
-    size_t outputSize = vertices.size() * 32;
+    // 20 bytes per vertex (Packed GasRender)
+    size_t outputSize = vertices.size() * 20;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, res.outputSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, outputSize, NULL, GL_DYNAMIC_DRAW);
 
@@ -270,9 +265,6 @@ void spawnCloudParticles(std::vector<GasVertex>& targetBuffer, GasType type,
         float turbPhase = dist(rng) * 2.0f * M_PI;
         float turbSpeed = 0.5f + dist(rng) * 0.5f;
         v.packedTurbulence = glm::packHalf2x16(glm::vec2(turbPhase, turbSpeed));
-
-        v._pad0 = 0;
-        v._pad1 = 0;
 
         targetBuffer.push_back(v);
     }

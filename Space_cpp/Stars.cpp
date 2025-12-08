@@ -122,19 +122,22 @@ void initStars() {
     // Bind Output Buffer as VBO for the VAO
     glBindBuffer(GL_ARRAY_BUFFER, outputSSBO);
 
-    const int STRIDE = 24;
+    // Packed to 20 bytes (Pos(12) + Color(4) + Size(4))
+    const int STRIDE = 20;
 
-    // Attrib 0: Pos + Doppler (vec4)
+    // Attrib 0: Pos (vec3) - px, py, pz
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
 
     // Attrib 1: Color (vec4 unpacked from uint)
+    // Offset 12 (after 3 floats)
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)16);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, STRIDE, (void*)12);
 
     // Attrib 2: Size (float)
+    // Offset 16 (after color)
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)20);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, STRIDE, (void*)16);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -165,9 +168,9 @@ void uploadStarData(const std::vector<StarInput>& stars) {
     glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * sizeof(StarInput), stars.data(), GL_STATIC_DRAW);
 
     // 2. Allocate Output Buffer (Dynamic - GPU write)
-    // Structure: 24 bytes per star (StarRender)
+    // Structure: 20 bytes per star (StarRender)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, outputSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * 24, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, stars.size() * 20, NULL, GL_DYNAMIC_DRAW);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }

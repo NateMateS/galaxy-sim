@@ -1,10 +1,9 @@
 #version 430 core
 
 // Inputs match the VAO layout defined in GalacticGas.cpp
-layout (location = 0) in vec3 aViewPos;    // From GasRender.position_depth.xyz
+layout (location = 0) in vec3 aViewPos;    // From GasRender.px, py, pz
 layout (location = 1) in vec4 aColor;      // From GasRender.color (Unpacked from uint)
-layout (location = 2) in float aLinearDepth; // From GasRender.position_depth.w
-layout (location = 3) in float aSize;      // From GasRender.size
+layout (location = 2) in float aSize;      // From GasRender.size
 
 out vec4 Color;
 out float LinearDepth;
@@ -24,7 +23,9 @@ void main()
 
     // Pass data to Fragment Shader
     Color = aColor;
-    LinearDepth = aLinearDepth;
+    // Calculate LinearDepth from View Space Z (Since aViewPos is in View Space)
+    // Positive depth is -z
+    LinearDepth = -aViewPos.z;
 
     // Point Size
     // This is the size ready for rasterization.

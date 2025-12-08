@@ -2,7 +2,7 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 layout(local_size_x = 256) in;
 
-// Packed Input (32 bytes)
+// Packed Input (24 bytes)
 struct GasInput {
     float orbitalRadius;       // 4 bytes
     uint packedOrbital;        // 4 bytes (angle, velocity) - Half2x16
@@ -10,16 +10,13 @@ struct GasInput {
     uint packedOffsetZSize;    // 4 bytes (z, size) - Half2x16
     uint color;                // 4 bytes (rgba8)
     uint packedTurbulence;     // 4 bytes (phase, speed) - Half2x16
-    uint _pad0;                // 4 bytes
-    uint _pad1;                // 4 bytes
 };
 
-// Packed Output (32 bytes)
+// Packed Output (20 bytes)
 struct GasRender {
-    vec4 position_depth; // 16 bytes
+    float px, py, pz;    // 12 bytes (Split vec3 to avoid std430 16-byte alignment)
     uint color;          // 4 bytes
     float size;          // 4 bytes
-    vec2 _pad;           // 8 bytes (align to 32)
 };
 
 struct DrawCommand {
@@ -184,8 +181,9 @@ void main() {
     uint localOffset = subgroupBallotExclusiveBitCount(ballot);
     uint outIdx = baseIndex + localOffset;
 
-    visibleParticles[outIdx].position_depth = vec4(viewPos, -viewPos.z);
+    visibleParticles[outIdx].px = viewPos.x;
+    visibleParticles[outIdx].py = viewPos.y;
+    visibleParticles[outIdx].pz = viewPos.z;
     visibleParticles[outIdx].color = finalColorPacked;
     visibleParticles[outIdx].size = finalSize;
-    visibleParticles[outIdx]._pad = vec2(0.0);
 }
